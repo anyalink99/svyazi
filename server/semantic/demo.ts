@@ -119,6 +119,10 @@ export class DemoSemanticSpace implements SemanticSpace {
     return [];
   }
 
+  lexicalSpecificity(): number {
+    return 1;
+  }
+
   candidatePool(targetWords: readonly string[], perWord = 128): string[] {
     const candidates = new Set<string>();
     for (const word of targetWords) {

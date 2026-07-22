@@ -30,6 +30,7 @@ export class PackedSemanticSpace implements SemanticSpace {
   private readonly boardIndices: number[];
   private readonly boardRows = new Map<number, number>();
   private readonly wordNet: PackedWordNet;
+  private readonly wordNetSpecificity = new Map<string, number>();
 
   private constructor(
     metadata: PackedMeta,
@@ -50,6 +51,15 @@ export class PackedSemanticSpace implements SemanticSpace {
     this.neighborScores = neighborScores;
     this.boardIndices = boardIndices;
     this.wordNet = wordNet;
+    const relationCounts = new Map<string, number>();
+    for (const relations of Object.values(wordNet)) {
+      for (const [candidate] of relations) relationCounts.set(candidate, (relationCounts.get(candidate) ?? 0) + 1);
+    }
+    const sourceCount = Object.keys(wordNet).length + 1;
+    const denominator = Math.log(sourceCount);
+    for (const [candidate, count] of relationCounts) {
+      this.wordNetSpecificity.set(candidate, Math.max(0.15, Math.log(sourceCount / (count + 1)) / denominator));
+    }
 
     this.words.forEach((word, index) => this.wordIndex.set(canonicalWord(word), index));
     this.boardIndices.forEach((wordIndex, row) => this.boardRows.set(wordIndex, row));
@@ -159,6 +169,10 @@ export class PackedSemanticSpace implements SemanticSpace {
 
   lexicalNeighbors(word: string): Array<{ word: string; score: number }> {
     return (this.wordNet[canonicalWord(word)] ?? []).map(([candidate, score]) => ({ word: candidate, score }));
+  }
+
+  lexicalSpecificity(word: string): number {
+    return this.wordNetSpecificity.get(canonicalWord(word)) ?? 1;
   }
 
   candidatePool(targetWords: readonly string[], perWord = 128): string[] {

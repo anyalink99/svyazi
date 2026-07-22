@@ -18,6 +18,10 @@ const PROFILE_SETTINGS: Record<OperativeProfile, ProfileSettings> = {
   daring: { strategy: "push", noise: 0.018, minimumSimilarity: -1, beyondClueMinimum: -1, uncertaintyStop: -1 }
 };
 
+const DIRECT_MODEL_CONFIDENCE = 0.28;
+const DIRECT_MODEL_SUPPORT = 0.22;
+const DIRECT_MODEL_BAND = 0.18;
+
 function round(value: number): number {
   return Math.round(value * 10_000) / 10_000;
 }
@@ -52,24 +56,51 @@ function clueVariants(semantic: SemanticSpace, clue: string): ClueVariant[] {
 function relatedSimilarity(
   semantic: SemanticSpace,
   variants: readonly ClueVariant[],
-  cardWord: string
+  cardWord: string,
+  directFloor: number | null
 ): number | null {
-  let best: number | null = null;
+  const directVector = semantic.similarity(variants[0].word, cardWord);
+  const canonicalCard = canonicalWord(cardWord);
   const cardRelations = new Map(semantic.lexicalNeighbors(cardWord).map((relation) => [canonicalWord(relation.word), relation.score]));
+  const directlyRelated = cardRelations.has(variants[0].word) || variants.some((variant) => variant.depth === 1 && variant.word === canonicalCard);
+  if (directFloor !== null && directVector !== null && directVector < directFloor && !directlyRelated) return directVector;
+  let best: number | null = null;
+  const sharedConcepts: number[] = [];
+  let directReverse: number | null = null;
   for (const variant of variants) {
     const vector = semantic.similarity(variant.word, cardWord);
     if (vector !== null) {
       const expanded = vector - (1 - variant.weight) * 0.16;
       best = best === null ? expanded : Math.max(best, expanded);
     }
-    const reverseLexical = variant.depth <= 1 ? cardRelations.get(variant.word) : undefined;
-    if (reverseLexical !== undefined) {
-      const lexical = reverseLexical * variant.weight;
-      best = best === null ? lexical : Math.max(best, lexical);
+    const reverseLexical = cardRelations.get(variant.word);
+    if (reverseLexical !== undefined && variant.depth === 0) {
+      directReverse = reverseLexical;
+    } else if (reverseLexical !== undefined && variant.depth === 1) {
+      sharedConcepts.push(reverseLexical * variant.weight * semantic.lexicalSpecificity(variant.word));
     }
-    if (variant.word === canonicalWord(cardWord)) {
-      best = best === null ? variant.weight : Math.max(best, variant.weight);
+    if (variant.word === canonicalCard) {
+      const exact = variant.depth === 0 || variant.weight >= 0.97
+        ? variant.weight
+        : variant.weight * (0.25 + semantic.lexicalSpecificity(variant.word) * 0.75);
+      best = best === null ? exact : Math.max(best, exact);
     }
+  }
+  // A single broad category is not evidence: polysemous chains such as
+  // "военный -> деловой <- лес" used to overpower the actual vector ranking.
+  // Direct card-to-clue relations are useful but calibrated; expanded concepts
+  // may dominate only when two independent lexical paths agree.
+  if (directReverse !== null) {
+    if (directReverse >= 0.99) {
+      best = best === null ? directReverse : Math.max(best, directReverse);
+    } else if (best !== null) {
+      best = Math.min(1, best + directReverse * semantic.lexicalSpecificity(variants[0].word) * 0.22);
+    }
+  }
+  sharedConcepts.sort((first, second) => second - first);
+  if (sharedConcepts.length >= 2) {
+    const agreement = (sharedConcepts[0] + sharedConcepts[1]) * 0.14;
+    best = best === null ? agreement : Math.min(1, best + agreement);
   }
   return best;
 }
@@ -94,6 +125,18 @@ export function planGuesses(
   }
   const activeClues = [...clueCounts].map(([word, remaining]) => ({ clue: word, remaining }));
   const activeVariants = activeClues.map((item) => clueVariants(semantic, item.clue));
+  const openCards = cards.filter((card) => !card.revealed);
+  const directFloors = activeClues.map((item) => {
+    const directScores = openCards
+      .map((card) => semantic.similarity(item.clue, card.word))
+      .filter((similarity): similarity is number => similarity !== null)
+      .sort((first, second) => second - first);
+    const strongest = directScores[0] ?? -1;
+    // Require a cluster, not one possibly polysemous outlier, before the base
+    // model is allowed to veto weaker expansion paths.
+    const supported = (directScores[1] ?? -1) >= DIRECT_MODEL_SUPPORT;
+    return strongest >= DIRECT_MODEL_CONFIDENCE && supported ? strongest - DIRECT_MODEL_BAND : null;
+  });
   const expectedAnswers = activeClues.reduce((sum, item) => sum + item.remaining, 0);
   const settings = PROFILE_SETTINGS[profile];
   const contextKey = activeClues.map((item) => `${item.clue}:${item.remaining}`).join("|");
@@ -102,12 +145,17 @@ export function planGuesses(
     .map((card, index) => ({ card, index }))
     .filter(({ card }) => !card.revealed)
     .map(({ card, index }) => {
-      const clueSimilarities = activeVariants.map((variants) => relatedSimilarity(semantic, variants, card.word));
+      const clueSimilarities = activeVariants.map((variants, clueIndex) =>
+        relatedSimilarity(semantic, variants, card.word, directFloors[clueIndex])
+      );
       if (clueSimilarities.every((similarity) => similarity === null)) {
         throw new Error(`Слова «${card.word}» нет в семантическом словаре.`);
       }
       const similarities = clueSimilarities.filter((similarity): similarity is number => similarity !== null);
-      const noiseOffset = normalRandom(random) * settings.noise;
+      // Randomness may shuffle genuinely close associations, but it should not
+      // overpower a meaningful semantic gap between two cards.
+      const boundedNoise = Math.max(-1, Math.min(1, normalRandom(random)));
+      const noiseOffset = boundedNoise * settings.noise;
       return {
         index,
         word: card.word,
