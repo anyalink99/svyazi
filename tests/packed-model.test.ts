@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createGame } from "../src/domain/game.js";
 import { runTurn } from "../server/ai/turn.js";
 import { generateClue } from "../server/ai/spymaster.js";
+import { planGuesses } from "../server/ai/operative.js";
 import { PackedSemanticSpace } from "../server/semantic/packed.js";
 
 describe("packed Navec model", () => {
@@ -46,5 +47,15 @@ describe("packed Navec model", () => {
 
     expect(directClues.has(clue.word)).toBe(true);
     expect(clue.targetWords).toEqual([target]);
+  });
+
+  it("understands a colloquial human clue through its lexical meaning", async () => {
+    const semantic = await PackedSemanticSpace.load("data/model");
+    const cards = ["сигнал", "мастерская", "пьяный"].map((word) => ({ word, revealed: false }));
+
+    for (const profile of ["cautious", "balanced", "daring"] as const) {
+      const plan = planGuesses(semantic, cards, "трудовик", 1, profile, 7);
+      expect(plan.picks[0]?.word).toBe("мастерская");
+    }
   });
 });

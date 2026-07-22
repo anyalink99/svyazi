@@ -2,6 +2,7 @@ import { hashString, mulberry32, normalRandom } from "../../src/domain/random.js
 import type { ClueMemory } from "../../src/domain/clues.js";
 import type { CardState, GuessPlan, OperativeProfile, RankedCard } from "../../src/domain/types.js";
 import type { SemanticSpace } from "../semantic/space.js";
+import { canonicalWord } from "../semantic/space.js";
 
 interface ProfileSettings {
   strategy: "cautious" | "declared" | "push";
@@ -12,13 +13,65 @@ interface ProfileSettings {
 }
 
 const PROFILE_SETTINGS: Record<OperativeProfile, ProfileSettings> = {
-  cautious: { strategy: "cautious", noise: 0.018, minimumSimilarity: 0.24, beyondClueMinimum: 0.44, uncertaintyStop: 0.025 },
-  balanced: { strategy: "declared", noise: 0.038, minimumSimilarity: 0.035, beyondClueMinimum: 1, uncertaintyStop: 0.003 },
-  daring: { strategy: "push", noise: 0.068, minimumSimilarity: -1, beyondClueMinimum: -1, uncertaintyStop: -1 }
+  cautious: { strategy: "cautious", noise: 0.01, minimumSimilarity: 0.24, beyondClueMinimum: 0.44, uncertaintyStop: 0.025 },
+  balanced: { strategy: "declared", noise: 0.014, minimumSimilarity: 0.035, beyondClueMinimum: 1, uncertaintyStop: 0.003 },
+  daring: { strategy: "push", noise: 0.018, minimumSimilarity: -1, beyondClueMinimum: -1, uncertaintyStop: -1 }
 };
 
 function round(value: number): number {
   return Math.round(value * 10_000) / 10_000;
+}
+
+interface ClueVariant {
+  word: string;
+  weight: number;
+  depth: 0 | 1 | 2;
+}
+
+function clueVariants(semantic: SemanticSpace, clue: string): ClueVariant[] {
+  const variants = new Map<string, ClueVariant>();
+  const add = (word: string, weight: number, depth: ClueVariant["depth"]) => {
+    const canonical = canonicalWord(word);
+    const current = variants.get(canonical);
+    if (!current || weight > current.weight || (weight === current.weight && depth < current.depth)) {
+      variants.set(canonical, { word: canonical, weight, depth });
+    }
+  };
+  add(clue, 1, 0);
+  const direct = semantic.lexicalNeighbors(clue).slice(0, 24);
+  for (const relation of direct) add(relation.word, relation.score * 0.98, 1);
+  for (const relation of direct.slice(0, 14)) {
+    const synonyms = semantic.lexicalNeighbors(relation.word).filter((second) => second.score >= 0.99).slice(0, 10);
+    for (const second of synonyms) {
+      add(second.word, relation.score * second.score * 0.82, 2);
+    }
+  }
+  return [...variants.values()].sort((first, second) => second.weight - first.weight).slice(0, 48);
+}
+
+function relatedSimilarity(
+  semantic: SemanticSpace,
+  variants: readonly ClueVariant[],
+  cardWord: string
+): number | null {
+  let best: number | null = null;
+  const cardRelations = new Map(semantic.lexicalNeighbors(cardWord).map((relation) => [canonicalWord(relation.word), relation.score]));
+  for (const variant of variants) {
+    const vector = semantic.similarity(variant.word, cardWord);
+    if (vector !== null) {
+      const expanded = vector - (1 - variant.weight) * 0.16;
+      best = best === null ? expanded : Math.max(best, expanded);
+    }
+    const reverseLexical = variant.depth <= 1 ? cardRelations.get(variant.word) : undefined;
+    if (reverseLexical !== undefined) {
+      const lexical = reverseLexical * variant.weight;
+      best = best === null ? lexical : Math.max(best, lexical);
+    }
+    if (variant.word === canonicalWord(cardWord)) {
+      best = best === null ? variant.weight : Math.max(best, variant.weight);
+    }
+  }
+  return best;
 }
 
 export function planGuesses(
@@ -40,6 +93,7 @@ export function planGuesses(
     clueCounts.set(item.clue, (clueCounts.get(item.clue) ?? 0) + item.remaining);
   }
   const activeClues = [...clueCounts].map(([word, remaining]) => ({ clue: word, remaining }));
+  const activeVariants = activeClues.map((item) => clueVariants(semantic, item.clue));
   const expectedAnswers = activeClues.reduce((sum, item) => sum + item.remaining, 0);
   const settings = PROFILE_SETTINGS[profile];
   const contextKey = activeClues.map((item) => `${item.clue}:${item.remaining}`).join("|");
@@ -48,7 +102,7 @@ export function planGuesses(
     .map((card, index) => ({ card, index }))
     .filter(({ card }) => !card.revealed)
     .map(({ card, index }) => {
-      const clueSimilarities = activeClues.map((item) => semantic.similarity(item.clue, card.word));
+      const clueSimilarities = activeVariants.map((variants) => relatedSimilarity(semantic, variants, card.word));
       if (clueSimilarities.every((similarity) => similarity === null)) {
         throw new Error(`Слова «${card.word}» нет в семантическом словаре.`);
       }

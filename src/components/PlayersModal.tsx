@@ -48,6 +48,34 @@ const RISK_OPTIONS: ChoiceOption<OperativeProfile>[] = [
   { value: "daring", label: "Рискованно" }
 ];
 
+function RuleSwitch({
+  checked,
+  disabled,
+  label,
+  detail,
+  onChange
+}: {
+  checked: boolean;
+  disabled: boolean;
+  label: string;
+  detail: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <button
+      className={`rule-switch${checked ? " is-on" : ""}`}
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+    >
+      <span className="rule-switch__copy"><strong>{label}</strong><small>{detail}</small></span>
+      <span className="rule-switch__control" aria-hidden="true"><i /><b>{checked ? "ВКЛ" : "ВЫКЛ"}</b></span>
+    </button>
+  );
+}
+
 function SeatEditor({
   label,
   value,
@@ -331,14 +359,8 @@ export function PlayersModal(props: PlayersModalProps) {
         </div>
 
         <section className="lobby-rules" aria-label="Правила хода">
-          <label className="check-setting">
-            <input type="checkbox" checked={draftAutoPlay} disabled={!props.canManageLobby} onChange={(event) => setDraftAutoPlay(event.target.checked)} />
-            <span>Автопилот ИИ</span>
-          </label>
-          <label className="check-setting">
-            <input type="checkbox" checked={draftTimerEnabled} disabled={!props.canManageLobby} onChange={(event) => setDraftTimerEnabled(event.target.checked)} />
-            <span>Таймер · первый ход 2:00, дальше 1:00</span>
-          </label>
+          <RuleSwitch checked={draftAutoPlay} disabled={!props.canManageLobby} label="Автопилот ИИ" detail="ИИ продолжает доступные этапы" onChange={setDraftAutoPlay} />
+          <RuleSwitch checked={draftTimerEnabled} disabled={!props.canManageLobby} label="Таймер хода" detail="Первый ведущий 2:00 · дальше 1:00" onChange={setDraftTimerEnabled} />
         </section>
 
         <section className={`room-foundation${roomOpen ? " is-open" : ""}`}>
