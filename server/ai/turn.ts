@@ -1,5 +1,5 @@
 import { cloneGame, otherTeam, remainingForTeam } from "../../src/domain/game.js";
-import { unresolvedClues } from "../../src/domain/clues.js";
+import { refreshTrackedClueRemainders, unresolvedClues } from "../../src/domain/clues.js";
 import type {
   ClueAmbition,
   ClueAnalysis,
@@ -82,15 +82,17 @@ export function runTurn(
   options: TurnOptions = {}
 ): TurnResult {
   if (inputState.winner) throw new Error("Партия уже закончена.");
-  const state = cloneGame(inputState);
-  const team = state.turn;
+  const clonedState = cloneGame(inputState);
+  const team = clonedState.turn;
+  const state = options.providedClue ? clonedState : refreshTrackedClueRemainders(clonedState, team);
   const providedNumber = Math.max(1, Math.min(9, options.providedNumber ?? 1));
   const clue = options.providedClue
     ? analyzeProvidedClue(semantic, state, options.providedClue, providedNumber, options.allowUnknownClue)
     : generateClue(semantic, state.cards, team, {
         ambition: options.clueAmbition,
         maxNumber: options.maxClueNumber,
-        neighborsPerTarget: options.neighborsPerTarget
+        neighborsPerTarget: options.neighborsPerTarget,
+        excludedClues: state.history.map((record) => record.clue)
       });
   const plan = planGuesses(
     semantic,

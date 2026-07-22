@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { AiTuning, ControllerKind, SeatAssignment, TeamSeats } from "../domain/multiplayer.js";
-import { cloneSeats, DEFAULT_AI_TUNING } from "../domain/setup.js";
+import { allSeats, cloneSeats } from "../domain/setup.js";
 import type { ClueAmbition, OperativeProfile, Team } from "../domain/types.js";
 import { useModalPresence } from "../hooks/useModalPresence.js";
 import type { NetworkRole, PeerInfo } from "../multiplayer/p2p.js";
@@ -25,13 +25,6 @@ interface PlayersModalProps {
   onLeaveRoom: () => Promise<void>;
 }
 
-interface SetupPreset {
-  label: string;
-  detail: string;
-  seats: TeamSeats;
-  localSeatId: string | null;
-}
-
 const CONTROLLER_OPTIONS: ChoiceOption<ControllerKind>[] = [
   { value: "human", label: "Человек" },
   { value: "ai", label: "ИИ" }
@@ -49,51 +42,6 @@ const RISK_OPTIONS: ChoiceOption<OperativeProfile>[] = [
   { value: "daring", label: "Рискованно" }
 ];
 
-const PRESETS: SetupPreset[] = [
-  {
-    label: "Я угадываю",
-    detail: "ИИ ведёт обе команды, вы играете за красных",
-    localSeatId: "preset-red-you",
-    seats: {
-      red: { spymaster: { id: "preset-red-spy", controller: "ai", name: "ИИ-ведущий" }, operatives: [{ id: "preset-red-you", controller: "human", name: "Вы" }] },
-      blue: { spymaster: { id: "preset-blue-spy", controller: "ai", name: "ИИ-ведущий" }, operatives: [{ id: "preset-blue-ai", controller: "ai", name: "ИИ-оперативник" }] }
-    }
-  },
-  {
-    label: "Я ведущий",
-    detail: "Вы всегда видите ключ и объясняете красным",
-    localSeatId: "preset-red-spy-you",
-    seats: {
-      red: { spymaster: { id: "preset-red-spy-you", controller: "human", name: "Вы" }, operatives: [{ id: "preset-red-ai", controller: "ai", name: "ИИ-оперативник" }] },
-      blue: { spymaster: { id: "preset-blue-spy-2", controller: "ai", name: "ИИ-ведущий" }, operatives: [{ id: "preset-blue-ai-2", controller: "ai", name: "ИИ-оперативник" }] }
-    }
-  },
-  {
-    label: "Угадываем вдвоём",
-    detail: "Два человека должны выбрать одну карточку",
-    localSeatId: "preset-red-op-1",
-    seats: {
-      red: {
-        spymaster: { id: "preset-red-spy-3", controller: "ai", name: "ИИ-ведущий" },
-        operatives: [
-          { id: "preset-red-op-1", controller: "human", name: "Игрок 1" },
-          { id: "preset-red-op-2", controller: "human", name: "Игрок 2" }
-        ]
-      },
-      blue: { spymaster: { id: "preset-blue-spy-3", controller: "ai", name: "ИИ-ведущий" }, operatives: [{ id: "preset-blue-ai-3", controller: "ai", name: "ИИ-оперативник" }] }
-    }
-  },
-  {
-    label: "Наблюдать",
-    detail: "Все роли играют автоматически",
-    localSeatId: null,
-    seats: {
-      red: { spymaster: { id: "preset-red-spy-4", controller: "ai", name: "Красный ИИ-ведущий" }, operatives: [{ id: "preset-red-ai-4", controller: "ai", name: "Красный ИИ-оперативник" }] },
-      blue: { spymaster: { id: "preset-blue-spy-4", controller: "ai", name: "Синий ИИ-ведущий" }, operatives: [{ id: "preset-blue-ai-4", controller: "ai", name: "Синий ИИ-оперативник" }] }
-    }
-  }
-];
-
 function SeatEditor({
   label,
   value,
@@ -102,7 +50,7 @@ function SeatEditor({
   onChange,
   onMakeLocal,
   onRemove,
-  removing = false
+  occupiedBy = null
 }: {
   label: string;
   value: SeatAssignment;
@@ -111,10 +59,10 @@ function SeatEditor({
   onChange: (value: SeatAssignment) => void;
   onMakeLocal: () => void;
   onRemove?: () => void;
-  removing?: boolean;
+  occupiedBy?: string | null;
 }) {
   return (
-    <div className={`seat-editor${local ? " is-local" : ""}${removing ? " is-removing" : ""}`}>
+    <div className={`seat-editor${local ? " is-local" : ""}${occupiedBy ? " is-occupied" : ""}`}>
       <strong>{label}</strong>
       <ChoiceSelect
         value={value.controller}
@@ -122,22 +70,22 @@ function SeatEditor({
         ariaLabel={`Тип игрока: ${label}`}
         onChange={(controller) => onChange({ ...value, controller })}
       />
-      <input value={value.name} onChange={(event) => onChange({ ...value, name: event.target.value })} aria-label={`Имя: ${label}`} />
       {value.controller === "human" ? (
         <button
-          className="local-seat-button"
+          className="claim-seat-button"
           type="button"
           aria-pressed={local}
+          disabled={Boolean(occupiedBy) && !local}
           onClick={onMakeLocal}
-        >{local ? "✓ Это вы" : "Это вы"}</button>
-      ) : <span className="local-seat-placeholder" aria-hidden="true" />}
+        >{local ? `✓ ${value.name}` : occupiedBy ?? "Занять"}</button>
+      ) : <input className="seat-name-input" value={value.name} onChange={(event) => onChange({ ...value, name: event.target.value })} aria-label={`Имя: ${label}`} />}
       {removable ? <button className="remove-seat-button" type="button" onClick={onRemove} aria-label={`Удалить: ${label}`}>×</button> : null}
     </div>
   );
 }
 
 export function PlayersModal(props: PlayersModalProps) {
-  const [networkName, setNetworkName] = useState("Игрок");
+  const [networkName, setNetworkName] = useState(() => allSeats(props.seats).find((seat) => seat.id === props.localSeatId)?.name ?? "Игрок");
   const [networkCode, setNetworkCode] = useState("");
   const [networkBusy, setNetworkBusy] = useState(false);
   const [networkError, setNetworkError] = useState<string | null>(null);
@@ -191,6 +139,35 @@ export function PlayersModal(props: PlayersModalProps) {
     });
   }
 
+  function claimSeat(team: Team, role: "spymaster" | "operative", index = 0) {
+    const nickname = networkName.trim() || "Игрок";
+    if (role === "spymaster") {
+      const seat = draftSeats[team].spymaster;
+      updateSpymaster(team, { ...seat, name: nickname });
+      setDraftLocalSeatId(seat.id);
+      return;
+    }
+    const seat = draftSeats[team].operatives[index];
+    updateOperative(team, index, { ...seat, name: nickname });
+    setDraftLocalSeatId(seat.id);
+  }
+
+  function changeNetworkName(name: string) {
+    setNetworkName(name);
+    if (!draftLocalSeatId) return;
+    const nickname = name.trim() || "Игрок";
+    setDraftSeats((current) => ({
+      red: {
+        spymaster: current.red.spymaster.id === draftLocalSeatId ? { ...current.red.spymaster, name: nickname } : current.red.spymaster,
+        operatives: current.red.operatives.map((seat) => seat.id === draftLocalSeatId ? { ...seat, name: nickname } : seat)
+      },
+      blue: {
+        spymaster: current.blue.spymaster.id === draftLocalSeatId ? { ...current.blue.spymaster, name: nickname } : current.blue.spymaster,
+        operatives: current.blue.operatives.map((seat) => seat.id === draftLocalSeatId ? { ...seat, name: nickname } : seat)
+      }
+    }));
+  }
+
   function removeOperative(team: Team, index: number) {
     const removed = draftSeats[team].operatives[index];
     if (draftSeats[team].operatives.length <= 1) return;
@@ -206,7 +183,7 @@ export function PlayersModal(props: PlayersModalProps) {
         return next;
       });
       if (removed.id === draftLocalSeatId) setDraftLocalSeatId(null);
-    }, 190);
+    }, 240);
   }
 
   function updateTuning(team: Team, patch: Partial<AiTuning[Team]>) {
@@ -271,18 +248,6 @@ export function PlayersModal(props: PlayersModalProps) {
           <button type="button" onClick={props.onClose} aria-label="Закрыть">×</button>
         </header>
 
-        <div className="preset-grid">
-          {PRESETS.map((preset) => (
-            <button type="button" key={preset.label} onClick={() => {
-              setDraftSeats(cloneSeats(preset.seats));
-              setDraftTuning(structuredClone(DEFAULT_AI_TUNING));
-              setDraftLocalSeatId(preset.localSeatId);
-            }}>
-              <strong>{preset.label}</strong><span>{preset.detail}</span>
-            </button>
-          ))}
-        </div>
-
         <div className="team-seats">
           {(["red", "blue"] as Team[]).map((team) => (
             <section className={`team-seat-card is-${team}`} key={team}>
@@ -291,22 +256,26 @@ export function PlayersModal(props: PlayersModalProps) {
                 label="Ведущий"
                 value={draftSeats[team].spymaster}
                 local={draftLocalSeatId === draftSeats[team].spymaster.id}
+                occupiedBy={props.networkPeers.find((peer) => peer.seatId === draftSeats[team].spymaster.id)?.name}
                 onChange={(value) => updateSpymaster(team, value)}
-                onMakeLocal={() => setDraftLocalSeatId(draftSeats[team].spymaster.id)}
+                onMakeLocal={() => claimSeat(team, "spymaster")}
               />
               <div className="operative-roster">
                 {draftSeats[team].operatives.map((operative, index) => (
-                  <SeatEditor
-                    key={operative.id}
-                    label={`Оперативник ${index + 1}`}
-                    value={operative}
-                    local={draftLocalSeatId === operative.id}
-                    removable={draftSeats[team].operatives.length > 1}
-                    removing={removingSeatIds.has(operative.id)}
-                    onChange={(value) => updateOperative(team, index, value)}
-                    onMakeLocal={() => setDraftLocalSeatId(operative.id)}
-                    onRemove={() => removeOperative(team, index)}
-                  />
+                  <div className={`operative-slot${removingSeatIds.has(operative.id) ? " is-removing" : ""}`} key={operative.id}>
+                    <div className="operative-slot__inner">
+                      <SeatEditor
+                        label={`Оперативник ${index + 1}`}
+                        value={operative}
+                        local={draftLocalSeatId === operative.id}
+                        occupiedBy={props.networkPeers.find((peer) => peer.seatId === operative.id)?.name}
+                        removable={draftSeats[team].operatives.length > 1}
+                        onChange={(value) => updateOperative(team, index, value)}
+                        onMakeLocal={() => claimSeat(team, "operative", index)}
+                        onRemove={() => removeOperative(team, index)}
+                      />
+                    </div>
+                  </div>
                 ))}
                 <button className="add-operative-button" type="button" onClick={() => addOperative(team)}>+ Добавить оперативника</button>
               </div>
@@ -326,7 +295,7 @@ export function PlayersModal(props: PlayersModalProps) {
             <div>
               {props.networkRole === "offline" ? (
                 <div className="room-connect-form">
-                  <label><span>Ваше имя</span><input value={networkName} maxLength={24} onChange={(event) => setNetworkName(event.target.value)} /></label>
+                  <label><span>Ваш ник</span><input value={networkName} maxLength={24} onChange={(event) => changeNetworkName(event.target.value)} /></label>
                   <button type="button" aria-busy={networkBusy} disabled={networkBusy} onClick={() => void createNetworkRoom()}>Создать комнату</button>
                   <span className="room-connect-form__or">или</span>
                   <label><span>Код комнаты</span><input className="room-code-input" value={networkCode} maxLength={8} placeholder="ABC123" onChange={(event) => setNetworkCode(event.target.value.toUpperCase())} /></label>

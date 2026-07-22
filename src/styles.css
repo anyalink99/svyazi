@@ -1167,7 +1167,7 @@ select { padding: 7px 9px; }
   background: rgba(229, 184, 92, 0.06);
 }
 
-.local-seat-button,
+.claim-seat-button,
 .remove-seat-button,
 .add-operative-button {
   min-height: 32px;
@@ -1177,10 +1177,28 @@ select { padding: 7px 9px; }
   font-size: 0.56rem;
 }
 
-.local-seat-button[aria-pressed="true"] {
+.claim-seat-button {
+  grid-column: 3 / 5;
+  overflow: hidden;
+  padding-inline: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claim-seat-button[aria-pressed="true"] {
   color: var(--ink);
   border-color: var(--amber);
   background: var(--amber);
+}
+
+.claim-seat-button:disabled {
+  color: var(--sand);
+  border-color: var(--line);
+  opacity: 0.68;
+}
+
+.seat-name-input {
+  grid-column: 3 / 5;
 }
 
 .remove-seat-button {
@@ -1463,6 +1481,10 @@ select { padding: 7px 9px; }
   gap: 3px;
 }
 
+.clue-carryover__item > div.is-readonly {
+  grid-template-columns: 42px;
+}
+
 .clue-carryover__item button {
   display: grid;
   width: 20px;
@@ -1497,7 +1519,7 @@ select { padding: 7px 9px; }
   min-width: 0;
 }
 
-.players-modal .local-seat-button {
+.players-modal .claim-seat-button {
   white-space: nowrap;
 }
 
@@ -3006,11 +3028,6 @@ select { padding: 7px 9px; }
   }
 }
 
-.local-seat-placeholder {
-  display: block;
-  min-height: 32px;
-}
-
 .players-modal .room-foundation {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -3087,23 +3104,50 @@ select { padding: 7px 9px; }
 }
 
 .players-modal .seat-editor {
-  animation: lobby-seat-in 210ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  transform-origin: top center;
-  transition: min-height 190ms ease, margin 190ms ease, padding 190ms ease, border-color 150ms ease, background 150ms ease, opacity 150ms ease, transform 190ms ease;
+  transition: border-color 150ms ease, background 150ms ease;
 }
 
-.players-modal .seat-editor.is-removing {
-  min-height: 0;
-  margin-block: 0;
-  padding-block: 0;
+.players-modal .seat-editor .seat-name-input {
+  grid-column: 3 / 5;
+}
+
+.operative-slot {
+  display: grid;
+  grid-template-rows: 1fr;
   opacity: 0;
-  transform: translateY(-7px) scaleY(0.72);
+  transform: translateY(-5px);
+  animation: operative-slot-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  transition: grid-template-rows 240ms cubic-bezier(0.4, 0, 0.2, 1), opacity 180ms ease, transform 240ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.operative-slot__inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.operative-slot.is-removing {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-6px);
   pointer-events: none;
 }
 
-@keyframes lobby-seat-in {
-  from { opacity: 0; transform: translateY(-7px) scaleY(0.86); }
+@keyframes operative-slot-in {
+  from { opacity: 0; transform: translateY(-5px); }
   to { opacity: 1; transform: translateY(0) scaleY(1); }
+}
+
+.operative-slot.is-removing .seat-editor {
+  margin-top: 0;
+  padding-block: 0;
+  border-color: transparent;
+}
+
+@media (max-width: 700px) {
+  .players-modal .claim-seat-button,
+  .players-modal .seat-editor .seat-name-input {
+    grid-column: 1 / -1;
+  }
 }
 
 .players-modal .room-foundation {

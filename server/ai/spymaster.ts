@@ -1,12 +1,13 @@
 import type { CardState, ClueAmbition, ClueAnalysis, RankedCard, Team } from "../../src/domain/types.js";
 import { hashString } from "../../src/domain/random.js";
 import { createClueValidator, type LegalityResult } from "./legality.js";
-import type { SemanticSpace } from "../semantic/space.js";
+import { canonicalWord, type SemanticSpace } from "../semantic/space.js";
 
 export interface SpymasterOptions {
   ambition?: ClueAmbition;
   maxNumber?: number;
   neighborsPerTarget?: number;
+  excludedClues?: readonly string[];
 }
 
 const AMBITION_SETTINGS: Record<ClueAmbition, { maxNumber: number; baseTarget: number; extraChance: number; targetPull: number }> = {
@@ -97,6 +98,7 @@ export function generateClue(
     ambition.baseTarget + (targetRoll < ambition.extraChance ? 1 : 0)
   );
   const context = getBoardContext(semantic, boardWords);
+  const excludedClues = new Set((options.excludedClues ?? []).map(canonicalWord));
   const candidateSet = new Set<string>();
   for (const card of unrevealed) {
     const neighbors = context.neighborsByWord.get(card.word)?.slice(0, neighborLimit) ?? [];
@@ -110,6 +112,7 @@ export function generateClue(
   let bestRiskyFallback: ClueAnalysis | null = null;
 
   for (const candidate of candidates) {
+    if (excludedClues.has(canonicalWord(candidate))) continue;
     let legality = context.legality.get(candidate);
     if (!legality) {
       legality = context.validate(candidate);

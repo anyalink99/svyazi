@@ -6,6 +6,7 @@ import { History } from "./components/History.js";
 import { PlayersModal } from "./components/PlayersModal.js";
 import { TurnPanel, type GamePhase, type VoteStatus } from "./components/TurnPanel.js";
 import { remainingForTeam } from "./domain/game.js";
+import { refreshTrackedClueRemainders } from "./domain/clues.js";
 import type { AiTuning, TeamSeats } from "./domain/multiplayer.js";
 import { allSeats, cloneSeats, DEFAULT_AI_TUNING, DEFAULT_SEATS, operativeNames, seatTeamAndRole } from "./domain/setup.js";
 import { loadSession, saveSession } from "./domain/session.js";
@@ -242,6 +243,16 @@ export function App() {
   ]);
 
   useEffect(() => {
+    if (!localSeatId) return;
+    const stillHuman = allSeats(seats).some((seat) => seat.id === localSeatId && seat.controller === "human");
+    if (!stillHuman) setLocalSeatId(null);
+  }, [localSeatId, seats]);
+
+  useEffect(() => {
+    void network.setSeat(localSeatId);
+  }, [localSeatId, network.role, network.setSeat]);
+
+  useEffect(() => {
     if (network.role !== "host") return;
     const snapshot = buildSharedSession();
     if (snapshot) void network.broadcastSnapshot(snapshot);
@@ -259,12 +270,18 @@ export function App() {
     resetVoting();
   }, [game?.turnNumber, phase, resetVoting, seats]);
 
+  useEffect(() => {
+    if (!game || phase !== "clue" || network.role === "guest") return;
+    if (seats[game.turn].spymaster.controller !== "ai") return;
+    setGame((current) => current ? refreshTrackedClueRemainders(current, current.turn) : current);
+  }, [game?.turnNumber, network.role, phase, seats]);
+
   const requestAiClue = useCallback(async () => {
     if (!game || game.winner || phase !== "clue" || loading) return;
     setLoading(true);
     setError(null);
     try {
-      const clueBase = commitRemainingDraft(game, game.turn, remainingDraft);
+      const clueBase = refreshTrackedClueRemainders(game, game.turn);
       const generated = await api.clue(clueBase, tuning[game.turn].ambition);
       setGame(clueBase);
       setTurnBase(clueBase);

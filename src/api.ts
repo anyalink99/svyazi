@@ -58,7 +58,11 @@ export const api = {
   },
 
   async clue(state: GameState, ambition: ClueAmbition = "balanced", maxNumber?: number): Promise<ClueAnalysis> {
-    return generateClue(await semantic(), state.cards, state.turn, { ambition, maxNumber });
+    return generateClue(await semantic(), state.cards, state.turn, {
+      ambition,
+      maxNumber,
+      excludedClues: state.history.map((record) => record.clue)
+    });
   },
 
   async analyzeClue(state: GameState, clue: string, number: number, allowUnknown = false): Promise<ClueAnalysis> {

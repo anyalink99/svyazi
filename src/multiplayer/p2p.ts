@@ -27,6 +27,7 @@ export type MultiplayerCommand =
 export interface PeerInfo {
   id: string;
   name: string;
+  seatId: string | null;
 }
 
 interface P2POptions {
@@ -38,6 +39,7 @@ interface P2POptions {
 interface HelloMessage {
   name: string;
   role: "host" | "guest";
+  seatId: string | null;
 }
 
 const APP_ID = "svyazi-semantic-codenames-v1";
@@ -60,6 +62,7 @@ export function useP2PRoom(options: P2POptions) {
   const optionsRef = useRef(options);
   const roleRef = useRef<NetworkRole>("offline");
   const nameRef = useRef("Игрок");
+  const seatRef = useRef<string | null>(null);
   const hostPeerRef = useRef<string | null>(null);
   const [role, setRole] = useState<NetworkRole>("offline");
   const [roomCode, setRoomCode] = useState("");
@@ -111,7 +114,7 @@ export function useP2PRoom(options: P2POptions) {
       const message = JSON.parse(rawMessage) as HelloMessage;
       setPeers((current) => [
         ...current.filter((peer) => peer.id !== context.peerId),
-        { id: context.peerId, name: message.name || "Игрок" }
+        { id: context.peerId, name: message.name || "Игрок", seatId: message.seatId ?? null }
       ]);
       if (message.role === "host") hostPeerRef.current = context.peerId;
       setStatus("Соединение установлено");
@@ -132,7 +135,7 @@ export function useP2PRoom(options: P2POptions) {
     };
     room.onPeerJoin = (peerId) => {
       setStatus("Подключаем игрока…");
-      void hello.send(JSON.stringify({ name: nameRef.current, role: roleRef.current === "host" ? "host" : "guest" } satisfies HelloMessage), { target: peerId });
+      void hello.send(JSON.stringify({ name: nameRef.current, role: roleRef.current === "host" ? "host" : "guest", seatId: seatRef.current } satisfies HelloMessage), { target: peerId });
       if (roleRef.current === "host") {
         const snapshot = optionsRef.current.getSnapshot();
         if (snapshot) void state.send(JSON.stringify(snapshot), { target: peerId });
@@ -150,7 +153,7 @@ export function useP2PRoom(options: P2POptions) {
 
     // Announce immediately for peers whose join callback raced with action setup.
     for (const peerId of Object.keys(room.getPeers())) {
-      void hello.send(JSON.stringify({ name: nameRef.current, role: nextRole } satisfies HelloMessage), { target: peerId });
+      void hello.send(JSON.stringify({ name: nameRef.current, role: nextRole, seatId: seatRef.current } satisfies HelloMessage), { target: peerId });
     }
   }, [leave]);
 
@@ -172,6 +175,16 @@ export function useP2PRoom(options: P2POptions) {
     await commandRef.current.send(JSON.stringify(command), { target: hostPeerRef.current });
   }, []);
 
+  const setSeat = useCallback(async (seatId: string | null) => {
+    seatRef.current = seatId;
+    if (roleRef.current === "offline" || !helloRef.current) return;
+    await helloRef.current.send(JSON.stringify({
+      name: nameRef.current,
+      role: roleRef.current === "host" ? "host" : "guest",
+      seatId
+    } satisfies HelloMessage));
+  }, []);
+
   return {
     selfId,
     role,
@@ -181,6 +194,7 @@ export function useP2PRoom(options: P2POptions) {
     create,
     join,
     leave,
+    setSeat,
     broadcastSnapshot,
     sendCommand
   };

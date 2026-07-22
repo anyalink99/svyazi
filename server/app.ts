@@ -156,7 +156,8 @@ export function createApp(semantic: SemanticSpace) {
         generateClue(semantic, state.cards, body.team ?? state.turn, {
           maxNumber: body.maxNumber,
           ambition: body.ambition,
-          neighborsPerTarget: body.neighborsPerTarget
+          neighborsPerTarget: body.neighborsPerTarget,
+          excludedClues: state.history.map((record) => record.clue)
         })
       );
     })

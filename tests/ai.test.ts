@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { refreshTrackedClueRemainders } from "../src/domain/clues.js";
 import type { CardState, GameState } from "../src/domain/types.js";
 import { checkClueLegality } from "../server/ai/legality.js";
 import { planGuesses } from "../server/ai/operative.js";
@@ -55,6 +56,42 @@ describe("semantic agents", () => {
     expect(focused.number).toBeLessThanOrEqual(2);
     expect(balanced.number).toBeGreaterThanOrEqual(focused.number);
     expect(broad.number).toBeGreaterThanOrEqual(balanced.number);
+  });
+
+  it("does not repeat a clue that was already spoken", () => {
+    const first = generateClue(semantic, board, "red", { ambition: "balanced" });
+    const second = generateClue(semantic, board, "red", {
+      ambition: "balanced",
+      excludedClues: [first.word]
+    });
+
+    expect(second.word).not.toBe(first.word);
+  });
+
+  it("lets the AI spymaster recount its intended targets from the board", () => {
+    const cards = board.map((card) => ({ ...card }));
+    cards.find((card) => card.word === "ракета")!.revealed = true;
+    const state: GameState = {
+      id: "tracked-clue",
+      seed: 31,
+      cards,
+      turn: "red",
+      startingTeam: "red",
+      turnNumber: 3,
+      winner: null,
+      history: [{
+        turn: 1,
+        team: "red",
+        clue: "космос",
+        number: 2,
+        targetWords: ["ракета", "звезда"],
+        guesses: [],
+        remaining: 2,
+        endedBy: "stopped"
+      }]
+    };
+
+    expect(refreshTrackedClueRemainders(state, "red").history[0].remaining).toBe(1);
   });
 
   it("lets an operative rank cards without a role map", () => {

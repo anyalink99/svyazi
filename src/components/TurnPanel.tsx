@@ -117,14 +117,14 @@ export function TurnPanel(props: TurnPanelProps) {
               <strong>Остаток прошлых подсказок</strong>
               <div>
                 {previousClues.map((record) => {
-                  const remaining = draftRemaining(record);
+                  const remaining = spymaster.controller === "ai" ? clueRemaining(record) : draftRemaining(record);
                   return (
                     <div className="clue-carryover__item" key={`${record.team}:${record.turn}`}>
                       <span>{record.clue}</span>
-                      <div aria-label={`Осталось ${remaining} из ${record.number} слов`}>
-                        <button type="button" disabled={remaining === 0} onClick={() => props.onRemainingDraftChange(record, remaining - 1)}>−</button>
+                      <div className={spymaster.controller === "ai" ? "is-readonly" : ""} aria-label={`Осталось ${remaining} из ${record.number} слов`}>
+                        {spymaster.controller === "human" ? <button type="button" disabled={remaining === 0} onClick={() => props.onRemainingDraftChange(record, remaining - 1)}>−</button> : null}
                         <strong>{remaining}<i>/{record.number}</i></strong>
-                        <button type="button" disabled={remaining >= record.number} onClick={() => props.onRemainingDraftChange(record, remaining + 1)}>+</button>
+                        {spymaster.controller === "human" ? <button type="button" disabled={remaining >= record.number} onClick={() => props.onRemainingDraftChange(record, remaining + 1)}>+</button> : null}
                       </div>
                     </div>
                   );
