@@ -12,6 +12,8 @@ interface PackedLexicon {
   stems: string[];
 }
 
+type PackedWordNet = Record<string, Array<[word: string, score: number]>>;
+
 function toArrayBuffer(buffer: Buffer): ArrayBuffer {
   return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
 }
@@ -27,6 +29,7 @@ export class PackedSemanticSpace implements SemanticSpace {
   private readonly wordIndex = new Map<string, number>();
   private readonly boardIndices: number[];
   private readonly boardRows = new Map<number, number>();
+  private readonly wordNet: PackedWordNet;
 
   private constructor(
     metadata: PackedMeta,
@@ -35,7 +38,8 @@ export class PackedSemanticSpace implements SemanticSpace {
     norms: Float32Array,
     neighbors: Uint32Array,
     neighborScores: Int16Array,
-    boardIndices: number[]
+    boardIndices: number[],
+    wordNet: PackedWordNet
   ) {
     this.metadata = metadata;
     this.words = lexicon.words;
@@ -45,6 +49,7 @@ export class PackedSemanticSpace implements SemanticSpace {
     this.neighbors = neighbors;
     this.neighborScores = neighborScores;
     this.boardIndices = boardIndices;
+    this.wordNet = wordNet;
 
     this.words.forEach((word, index) => this.wordIndex.set(canonicalWord(word), index));
     this.boardIndices.forEach((wordIndex, row) => this.boardRows.set(wordIndex, row));
@@ -72,19 +77,21 @@ export class PackedSemanticSpace implements SemanticSpace {
   }
 
   static async load(modelDirectory: string): Promise<PackedSemanticSpace> {
-    const [metaRaw, lexiconRaw, vectorsRaw, normsRaw, neighborsRaw, neighborScoresRaw, boardRaw] = await Promise.all([
+    const [metaRaw, lexiconRaw, vectorsRaw, normsRaw, neighborsRaw, neighborScoresRaw, boardRaw, wordNetRaw] = await Promise.all([
       readFile(path.join(modelDirectory, "meta.json"), "utf8"),
       readFile(path.join(modelDirectory, "lexicon.json"), "utf8"),
       readFile(path.join(modelDirectory, "vectors.i8")),
       readFile(path.join(modelDirectory, "norms.f32")),
       readFile(path.join(modelDirectory, "neighbors.u32")),
       readFile(path.join(modelDirectory, "neighbor-scores.i16")),
-      readFile(path.join(modelDirectory, "board.json"), "utf8")
+      readFile(path.join(modelDirectory, "board.json"), "utf8"),
+      readFile(path.join(modelDirectory, "wordnet.json"), "utf8")
     ]);
 
     const metadata = JSON.parse(metaRaw) as PackedMeta;
     const lexicon = JSON.parse(lexiconRaw) as PackedLexicon;
     const boardIndices = JSON.parse(boardRaw) as number[];
+    const wordNet = JSON.parse(wordNetRaw) as PackedWordNet;
     return new PackedSemanticSpace(
       metadata,
       lexicon,
@@ -92,7 +99,8 @@ export class PackedSemanticSpace implements SemanticSpace {
       new Float32Array(toArrayBuffer(normsRaw)),
       new Uint32Array(toArrayBuffer(neighborsRaw)),
       new Int16Array(toArrayBuffer(neighborScoresRaw)),
-      boardIndices
+      boardIndices,
+      wordNet
     );
   }
 
@@ -147,6 +155,10 @@ export class PackedSemanticSpace implements SemanticSpace {
       }))
       .sort((first, second) => second.score - first.score)
       .slice(0, limit);
+  }
+
+  lexicalNeighbors(word: string): Array<{ word: string; score: number }> {
+    return (this.wordNet[canonicalWord(word)] ?? []).map(([candidate, score]) => ({ word: candidate, score }));
   }
 
   candidatePool(targetWords: readonly string[], perWord = 128): string[] {

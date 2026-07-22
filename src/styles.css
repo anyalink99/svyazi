@@ -1678,12 +1678,54 @@ select { padding: 7px 9px; }
 
 .turn-baton__message {
   display: grid;
-  gap: 2px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
 }
 
-.turn-baton__message span {
+.turn-baton__message > span {
+  align-self: center;
   font-size: 1rem;
   font-weight: 700;
+}
+
+.phase-timer {
+  --timer-progress: 1;
+  display: flex;
+  min-width: 92px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  color: var(--paper);
+  font-family: var(--mono);
+}
+
+.phase-timer > i {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: conic-gradient(var(--team-color) calc(var(--timer-progress) * 1turn), rgba(255, 255, 255, 0.09) 0);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.phase-timer > i > span {
+  width: 20px;
+  height: 20px;
+  border-radius: inherit;
+  background: var(--ink-deep);
+}
+
+.phase-timer > div { display: grid; gap: 1px; }
+.phase-timer small { color: var(--sand); font-size: 0.48rem; letter-spacing: 0.08em; text-transform: uppercase; }
+.phase-timer strong { min-width: 48px; font-size: 0.82rem; line-height: 1; letter-spacing: 0.04em; }
+.phase-timer.is-urgent { color: #ff9b91; }
+.phase-timer.is-urgent > i { animation: timer-urgent 900ms ease-in-out infinite; }
+.phase-timer.is-expired strong { animation: timer-urgent 900ms ease-in-out infinite; }
+
+@keyframes timer-urgent {
+  50% { opacity: 0.48; }
 }
 
 .turn-baton__message small,
@@ -2133,6 +2175,29 @@ select { padding: 7px 9px; }
 .seat-editor { display: grid; grid-template-columns: 96px 96px 1fr; gap: 8px; align-items: center; margin-top: 8px; }
 .seat-editor strong { color: var(--sand); font-size: 0.6rem; }
 .seat-editor input, .seat-editor select { width: 100%; font-size: 0.63rem; }
+
+.lobby-rules {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  margin: 0 22px 14px;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+
+.lobby-rules .check-setting {
+  min-height: 42px;
+  padding: 9px 13px;
+  color: var(--paper);
+  background: var(--ink-deep);
+  font-size: 0.62rem;
+}
+
+.lobby-rules input:disabled + span { opacity: 0.58; }
+
+@media (max-width: 700px) {
+  .lobby-rules { grid-template-columns: 1fr; margin-inline: 12px; }
+}
 
 .room-foundation {
   display: flex;
@@ -2638,6 +2703,86 @@ select { padding: 7px 9px; }
 
 .word-card.is-revealed[data-role="neutral"] .word-card__word {
   text-shadow: none;
+}
+
+/* Team choices read like small tactical seals placed on the physical card. */
+.word-card.has-votes:not(.is-revealed) {
+  z-index: 2;
+  transform: translateY(-3px);
+}
+
+.word-card.has-votes.is-voted-red:not(.is-revealed) {
+  background: linear-gradient(155deg, #fff8e8 0 64%, rgba(197, 67, 61, 0.22));
+  box-shadow: inset 0 0 0 4px var(--red), 0 9px 20px rgba(197, 67, 61, 0.22);
+}
+
+.word-card.has-votes.is-voted-blue:not(.is-revealed) {
+  background: linear-gradient(155deg, #fff8e8 0 64%, rgba(48, 119, 195, 0.22));
+  box-shadow: inset 0 0 0 4px var(--blue), 0 9px 20px rgba(48, 119, 195, 0.22);
+}
+
+.word-card.has-votes.is-local-vote:not(.is-revealed) {
+  filter: brightness(1.04) saturate(1.08);
+}
+
+.word-card__votes {
+  position: absolute;
+  right: 8px;
+  bottom: 7px;
+  left: 8px;
+  z-index: 3;
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.word-card__votes i {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  margin-left: -4px;
+  place-items: center;
+  border: 2px solid #fff3d7;
+  border-radius: 50%;
+  color: white;
+  box-shadow: 0 2px 6px rgba(9, 13, 18, 0.32);
+  font-family: var(--mono);
+  font-size: 0.52rem;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.word-card__votes i:first-child { margin-left: 0; }
+.word-card__votes i.is-red { background: var(--red); }
+.word-card__votes i.is-blue { background: var(--blue); }
+.word-card__votes i.is-local { outline: 2px solid var(--amber); outline-offset: 1px; }
+.word-card.has-votes .word-card__signal,
+.word-card.has-votes .word-card__choose { opacity: 0; }
+
+.word-card.is-revealed[data-role="neutral"] {
+  color: #f4eddd;
+  background:
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.055) 0 7px, transparent 7px 14px),
+    linear-gradient(145deg, #7d796f, #53534f);
+  box-shadow: inset 0 0 0 4px #343638, 0 9px 22px rgba(0, 0, 0, 0.28);
+}
+
+.word-card.is-revealed[data-role="neutral"] .word-card__word {
+  color: #fff9ec;
+  text-shadow: 0 2px 3px rgba(0, 0, 0, 0.46);
+}
+
+.game-action--quiet.is-voted {
+  border-color: var(--amber);
+  color: var(--amber-pale);
+  background: rgba(229, 184, 92, 0.09);
+}
+
+@media (max-width: 700px) {
+  .word-card__votes { bottom: 4px; min-height: 15px; }
+  .word-card__votes i { width: 15px; height: 15px; border-width: 1px; font-size: 0.4rem; }
 }
 
 .clue-form {

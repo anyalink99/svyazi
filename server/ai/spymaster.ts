@@ -19,6 +19,7 @@ const AMBITION_SETTINGS: Record<ClueAmbition, { maxNumber: number; baseTarget: n
 interface BoardSemanticContext {
   neighborsByWord: Map<string, Array<{ word: string; score: number }>>;
   scoreMaps: Map<string, Map<string, number>>;
+  lexicalMaps: Map<string, Map<string, number>>;
   floorScores: Map<string, number>;
   legality: Map<string, LegalityResult>;
   validate: (clue: string) => LegalityResult;
@@ -46,17 +47,20 @@ function getBoardContext(
 
   const neighborsByWord = new Map<string, Array<{ word: string; score: number }>>();
   const scoreMaps = new Map<string, Map<string, number>>();
+  const lexicalMaps = new Map<string, Map<string, number>>();
   const floorScores = new Map<string, number>();
   const fullLimit = semantic.metadata.neighborsPerBoardWord;
   for (const word of boardWords) {
     const neighbors = semantic.neighborsWithScores(word, fullLimit);
     neighborsByWord.set(word, neighbors);
     scoreMaps.set(word, new Map(neighbors.map((entry) => [entry.word, entry.score])));
+    lexicalMaps.set(word, new Map(semantic.lexicalNeighbors(word).map((entry) => [entry.word, entry.score])));
     floorScores.set(word, (neighbors.at(-1)?.score ?? 0) - 0.012);
   }
   const context: BoardSemanticContext = {
     neighborsByWord,
     scoreMaps,
+    lexicalMaps,
     floorScores,
     legality: new Map(),
     validate: createClueValidator(boardWords, semantic)
@@ -104,6 +108,7 @@ export function generateClue(
     const neighbors = context.neighborsByWord.get(card.word)?.slice(0, neighborLimit) ?? [];
     if (card.role === team) {
       for (const entry of neighbors) candidateSet.add(entry.word);
+      for (const entry of semantic.lexicalNeighbors(card.word)) candidateSet.add(entry.word);
     }
   }
   const candidates = [...candidateSet];
@@ -122,7 +127,9 @@ export function generateClue(
 
     const ranked: Array<RankedCard & { role: CardState["role"] }> = [];
     for (const card of unrevealed) {
-      const similarity = context.scoreMaps.get(card.word)?.get(candidate) ?? context.floorScores.get(card.word) ?? 0;
+      const vectorSimilarity = context.scoreMaps.get(card.word)?.get(candidate) ?? context.floorScores.get(card.word) ?? 0;
+      const lexicalSimilarity = context.lexicalMaps.get(card.word)?.get(candidate) ?? -1;
+      const similarity = Math.max(vectorSimilarity, lexicalSimilarity);
       ranked.push({
         index: card.index,
         word: card.word,

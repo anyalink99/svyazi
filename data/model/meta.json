@@ -1,7 +1,7 @@
 {
   "formatVersion": 1,
   "kind": "navec",
-  "source": "Navec hudlit v1, 12B tokens, 500K vocabulary",
+  "source": "Navec hudlit v1 + RuWordNet 2.0 lexical relations",
   "dimension": 128,
   "vocabularySize": 50000,
   "boardWordCount": 2500,

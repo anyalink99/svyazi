@@ -5,6 +5,7 @@
 - [Navec](https://github.com/natasha/navec), версия 0.10.0 — код библиотеки под лицензией MIT. Готовый pack: `navec_hudlit_v1_12B_500K_300d_100q.tar`, опубликованный авторами Navec.
 - [wordfreq](https://github.com/rspeer/wordfreq), версия 3.1.1 — библиотека под Apache-2.0; её частотные данные агрегированы из нескольких источников со своими условиями.
 - [pymorphy3](https://github.com/no-plagiarism/pymorphy3), версия 2.0.6 — MIT.
+- [RuWordNet](https://pypi.org/project/ruwordnet/), версия 0.0.6 — Python-обёртка и распространяемая ею база RuWordNet 2.0; пакет опубликован с лицензией MIT. В `wordnet.json` включена только производная выборка однословных связей для игровых слов.
 - [Snowball stemmer](https://github.com/snowballstem/snowball), версия 3.1.1 — BSD-3-Clause.
 
 JavaScript-зависимости перечислены в `package-lock.json` и сохраняют собственные лицензии.

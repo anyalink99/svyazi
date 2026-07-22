@@ -6,10 +6,7 @@ export interface ClueMemory {
 }
 
 export function clueRemaining(record: TurnRecord): number {
-  return record.remaining ?? Math.max(
-    0,
-    record.number - record.guesses.filter((guess) => guess.role === record.team).length
-  );
+  return record.remaining ?? record.number;
 }
 
 export function unresolvedClues(history: readonly TurnRecord[], team: Team): ClueMemory[] {

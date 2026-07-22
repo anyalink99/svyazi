@@ -163,7 +163,9 @@ export function resolveGuesses(
     number: clue.number,
     targetWords: clue.targetWords,
     guesses: revealed,
-    remaining: Math.max(0, clue.number - revealed.filter((guess) => guess.role === team).length),
+    // The spymaster confirms this on the team's next clue. A same-colour card may
+    // have been accidental or belong to another unresolved clue.
+    remaining: clue.number,
     endedBy
   };
   state.history.push(record);

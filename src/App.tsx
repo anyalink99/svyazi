@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ApiStatus, type ResolveResult } from "./api.js";
-import { Board } from "./components/Board.js";
+import { Board, type BoardVoteMarker } from "./components/Board.js";
 import { DeveloperModal } from "./components/DeveloperModal.js";
 import { History } from "./components/History.js";
 import { PlayersModal } from "./components/PlayersModal.js";
+import { PhaseTimer } from "./components/PhaseTimer.js";
 import { TurnPanel, type GamePhase, type VoteStatus } from "./components/TurnPanel.js";
 import { remainingForTeam } from "./domain/game.js";
 import { refreshTrackedClueRemainders } from "./domain/clues.js";
@@ -70,6 +71,7 @@ export function App() {
   const [lastRecord, setLastRecord] = useState<TurnRecord | null>(restoredSession?.lastRecord ?? null);
   const [pickedIndices, setPickedIndices] = useState<number[]>(restoredSession?.pickedIndices ?? []);
   const [votes, setVotes] = useState<Record<string, number>>(restoredSession?.votes ?? {});
+  const [finishVotes, setFinishVotes] = useState<Record<string, boolean>>(restoredSession?.finishVotes ?? {});
   const [voteCursor, setVoteCursor] = useState(restoredSession?.voteCursor ?? 0);
   const [voteMessage, setVoteMessage] = useState<string | null>(restoredSession?.voteMessage ?? null);
   const [loading, setLoading] = useState(false);
@@ -82,12 +84,15 @@ export function App() {
   const [showTrace, setShowTrace] = useState(restoredSession?.showTrace ?? false);
   const [showKey, setShowKey] = useState(restoredSession?.showKey ?? false);
   const [autoPlay, setAutoPlay] = useState(restoredSession?.autoPlay ?? false);
+  const [timerEnabled, setTimerEnabled] = useState(restoredSession?.timerEnabled ?? true);
+  const [phaseStartedAt, setPhaseStartedAt] = useState(restoredSession?.phaseStartedAt ?? Date.now());
   const [lobby, setLobby] = useState<LobbyState>(EMPTY_LOBBY);
   const lobbyRef = useRef(lobby);
   const seatsRef = useRef(seats);
   const gameRef = useRef(game);
   const phaseRef = useRef(phase);
   const votesRef = useRef(votes);
+  const finishVotesRef = useRef(finishVotes);
   const pickedIndicesRef = useRef(pickedIndices);
   const loadingRef = useRef(loading);
   const preferredNetworkSeatRef = useRef<string | null>(restoredSession?.localSeatId ?? DEFAULT_LOCAL_SEAT_ID);
@@ -97,6 +102,7 @@ export function App() {
   gameRef.current = game;
   phaseRef.current = phase;
   votesRef.current = votes;
+  finishVotesRef.current = finishVotes;
   pickedIndicesRef.current = pickedIndices;
   loadingRef.current = loading;
   const network = useP2PRoom({
@@ -121,14 +127,19 @@ export function App() {
   const humanOperatives = activeOperatives.filter((seat) => seat.controller === "human");
   const allActiveOperativesAi = activeOperatives.every((seat) => seat.controller === "ai");
   const allowUnknownClue = activeOperatives.every((seat) => seat.controller === "human");
-  const currentVoter = humanOperatives[voteCursor] ?? humanOperatives[0] ?? null;
   const activeVoterIds = activeOperatives.map((seat) => seat.id);
   const voteStatus: VoteStatus | null = allActiveOperativesAi ? null : {
-    currentVoterName: currentVoter?.name ?? null,
     cast: activeVoterIds.filter((id) => Number.isInteger(votes[id])).length,
     total: activeVoterIds.length,
-    message: voteMessage
+    message: voteMessage,
+    finishCast: activeVoterIds.filter((id) => finishVotes[id]).length,
+    localFinishVoted: Boolean(localSeatId && finishVotes[localSeatId])
   };
+  const voteMarkers = useMemo<BoardVoteMarker[]>(() => activeOperatives.flatMap((seat) => {
+    const index = votes[seat.id];
+    return Number.isInteger(index) ? [{ seatId: seat.id, name: seat.name, team: activeTeam, index }] : [];
+  }), [activeOperatives, activeTeam, votes]);
+  const phaseDurationSeconds = phase === "clue" && game?.turnNumber === 1 ? 120 : 60;
   const canControlSystem = network.role !== "guest";
   const canManageLobby = network.role !== "guest";
   const lobbyReady = network.role === "offline" || lobbyIsReady(lobby, seats);
@@ -145,6 +156,8 @@ export function App() {
   const resetVoting = useCallback(() => {
     votesRef.current = {};
     setVotes({});
+    finishVotesRef.current = {};
+    setFinishVotes({});
     setVoteCursor(0);
     setVoteMessage(null);
   }, []);
@@ -172,10 +185,14 @@ export function App() {
       lastRecord,
       pickedIndices,
       votes,
+      finishVotes,
       voteCursor,
       voteMessage,
       loading,
-      lobby
+      lobby,
+      autoPlay,
+      timerEnabled,
+      phaseStartedAt
     };
   }
 
@@ -192,9 +209,14 @@ export function App() {
     pickedIndicesRef.current = snapshot.pickedIndices;
     setVotes(snapshot.votes);
     votesRef.current = snapshot.votes;
+    setFinishVotes(snapshot.finishVotes ?? {});
+    finishVotesRef.current = snapshot.finishVotes ?? {};
     setVoteCursor(snapshot.voteCursor);
     setVoteMessage(snapshot.voteMessage);
     updateLoading(snapshot.loading);
+    setAutoPlay(snapshot.autoPlay ?? false);
+    setTimerEnabled(snapshot.timerEnabled ?? true);
+    setPhaseStartedAt(snapshot.phaseStartedAt ?? Date.now());
     const nextLobby = snapshot.lobby ?? EMPTY_LOBBY;
     setAuthoritativeLobby(nextLobby);
     const self = nextLobby.participants.find((participant) => participant.id === network.selfId);
@@ -270,7 +292,13 @@ export function App() {
       void chooseCard(command.index, actor.seat.id);
       return;
     }
-    if (command.type === "finish-guess") void finishHumanGuess();
+    if (command.type === "finish-guess") {
+      if (command.seatId !== actor.seat.id) {
+        rejectCommand(peerId, "Нельзя завершать ход от имени другого игрока.");
+        return;
+      }
+      void voteToFinish(actor.seat.id);
+    }
   }
 
   function dispatchHumanAction(command: MultiplayerCommand, action: () => void) {
@@ -285,6 +313,7 @@ export function App() {
     setGame(nextGame);
     setTurnBase(null);
     setPhase("clue");
+    setPhaseStartedAt(Date.now());
     setClue(null);
     setLastPlan(null);
     setLastRecord(null);
@@ -292,6 +321,8 @@ export function App() {
     setPickedIndices([]);
     votesRef.current = {};
     setVotes({});
+    finishVotesRef.current = {};
+    setFinishVotes({});
     setVoteCursor(0);
     setVoteMessage(null);
     setManualClue("");
@@ -342,6 +373,7 @@ export function App() {
       lastRecord,
       pickedIndices,
       votes,
+      finishVotes,
       voteCursor,
       voteMessage,
       manualClue,
@@ -349,12 +381,14 @@ export function App() {
       remainingDraft,
       showTrace,
       showKey,
-      autoPlay
+      autoPlay,
+      timerEnabled,
+      phaseStartedAt
     });
   }, [
-    autoPlay, clue, game, lastPlan, lastRecord, localSeatId, manualClue, manualNumber,
+    autoPlay, clue, finishVotes, game, lastPlan, lastRecord, localSeatId, manualClue, manualNumber,
     phase, pickedIndices, remainingDraft, seats, showKey, showTrace, tuning, turnBase,
-    voteCursor, voteMessage, votes
+    timerEnabled, phaseStartedAt, voteCursor, voteMessage, votes
   ]);
 
   useEffect(() => {
@@ -400,9 +434,9 @@ export function App() {
     const snapshot = buildSharedSession();
     if (snapshot) void network.broadcastSnapshot(snapshot);
   }, [
-    clue, game, lastPlan, lastRecord, loading, lobby, network.broadcastSnapshot,
+    autoPlay, clue, finishVotes, game, lastPlan, lastRecord, loading, lobby, network.broadcastSnapshot,
     network.role, phase, pickedIndices, seats, tuning, turnBase,
-    voteCursor, voteMessage, votes
+    timerEnabled, phaseStartedAt, voteCursor, voteMessage, votes
   ]);
 
   useEffect(() => {
@@ -425,6 +459,7 @@ export function App() {
       setPickedIndices([]);
       setRemainingDraft({});
       resetVoting();
+      setPhaseStartedAt(Date.now());
       setPhase("guess");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Ведущий не смог дать подсказку.");
@@ -453,6 +488,7 @@ export function App() {
       setPickedIndices([]);
       setRemainingDraft({});
       resetVoting();
+      setPhaseStartedAt(Date.now());
       setPhase("guess");
       setManualClue("");
     } catch (caught) {
@@ -474,6 +510,7 @@ export function App() {
     setGame(resolved.state);
     setLastRecord(resolved.record);
     resetVoting();
+    setPhaseStartedAt(Date.now());
     setPhase("result");
   }, [resetVoting]);
 
@@ -516,6 +553,31 @@ export function App() {
     }
   }, [acceptResolvedTurn, clue, loading, phase, pickedIndices, seats, turnBase]);
 
+  async function voteToFinish(voterSeatId: string) {
+    if (!turnBase || !clue || phase !== "guess" || loadingRef.current) return;
+    const operatives = seats[turnBase.turn].operatives;
+    if (!operatives.some((seat) => seat.id === voterSeatId && seat.controller === "human")) return;
+
+    const next = {
+      ...finishVotesRef.current,
+      [voterSeatId]: !finishVotesRef.current[voterSeatId]
+    };
+    if (next[voterSeatId]) {
+      for (const operative of operatives) {
+        if (operative.controller === "ai") next[operative.id] = true;
+      }
+    }
+    finishVotesRef.current = next;
+    setFinishVotes(next);
+    setVoteMessage(next[voterSeatId] ? "Остановка ждёт согласия всей команды." : null);
+
+    if (operatives.every((operative) => next[operative.id])) {
+      setVoteMessage("Все оперативники согласились остановиться.");
+      await delay(260);
+      await finishHumanGuess(pickedIndicesRef.current, true);
+    }
+  }
+
   function revealHumanChoice(index: number) {
     if (!game || !turnBase || !clue || game.cards[index]?.revealed) return;
     const team = turnBase.turn;
@@ -539,6 +601,11 @@ export function App() {
     const humans = operatives.filter((seat) => seat.controller === "human");
     const aiOperatives = operatives.filter((seat) => seat.controller === "ai");
 
+    if (Object.keys(finishVotesRef.current).length) {
+      finishVotesRef.current = {};
+      setFinishVotes({});
+    }
+
     if (operatives.length === 1 && humans.length === 1) {
       revealHumanChoice(index);
       return;
@@ -559,32 +626,30 @@ export function App() {
 
     let handedOffToResolution = false;
     try {
-      if (aiOperatives.length) {
+      if (aiOperatives.length && aiOperatives.some((operative) => !Number.isInteger(round.votes[operative.id]))) {
         updateLoading(true);
         const plan = await api.guesses(game, clue.word, clue.number, tuning[team].risk);
         setLastPlan(plan);
         const aiChoice = plan.picks[0]?.index;
         if (aiChoice === undefined) {
-          votesRef.current = {};
-          setVotes({});
-          setVoteCursor(0);
           setVoteMessage("ИИ предлагает остановиться. Карточка не открыта.");
           return;
         }
         for (const operative of aiOperatives) {
-          round = castCardVote(round.votes, operatives.map((seat) => seat.id), operative.id, aiChoice);
+          if (!Number.isInteger(round.votes[operative.id])) {
+            round = castCardVote(round.votes, operatives.map((seat) => seat.id), operative.id, aiChoice);
+          }
         }
         votesRef.current = round.votes;
+        setVotes(round.votes);
       }
 
       if (round.complete && round.consensusIndex !== null) {
         handedOffToResolution = true;
         updateLoading(false);
+        await delay(260);
         revealHumanChoice(round.consensusIndex);
       } else {
-        votesRef.current = {};
-        setVotes({});
-        setVoteCursor(0);
         setVoteMessage("Голоса не совпали. Обсудите выбор и попробуйте ещё раз.");
       }
     } catch (caught) {
@@ -596,6 +661,7 @@ export function App() {
 
   const continueToNextTurn = useCallback(() => {
     setPhase("clue");
+    setPhaseStartedAt(Date.now());
     setTurnBase(null);
     setClue(null);
     pickedIndicesRef.current = [];
@@ -691,6 +757,7 @@ export function App() {
           <div className="turn-baton__team"><span className={`team-beacon is-${activeTeam}`} /><strong>Ход {teamName(activeTeam)}</strong></div>
           <div className="turn-baton__message" key={`${activeTeam}-${phase}`}>
             <span>{phase === "clue" ? "Ведущий даёт подсказку" : phase === "guess" ? "Команда согласует карточки" : game?.winner ? `Победа ${teamName(game.winner)}` : "Команда завершила ход"}</span>
+            <PhaseTimer enabled={timerEnabled} phase={phase} startedAt={phaseStartedAt} durationSeconds={phaseDurationSeconds} />
           </div>
           <div className="turn-baton__role">{phase === "clue" ? displaySeats[activeTeam].spymaster.name : phase === "guess" ? operativeNames(displaySeats, activeTeam) : "Переход хода"}</div>
         </section>
@@ -704,6 +771,8 @@ export function App() {
               showTrace={showTrace}
               interactive={Boolean(phase === "guess" && localOperativeCanAct && network.hostAvailable && !loading && !persistentSpymasterView)}
               currentTeam={activeTeam}
+              voteMarkers={voteMarkers}
+              localSeatId={localSeatId}
               onCardClick={(index) => dispatchHumanAction(
                 { type: "choose-card", index, seatId: localSeatId ?? "" },
                 () => void chooseCard(index, localSeatId)
@@ -747,7 +816,10 @@ export function App() {
               )}
               onRequestClue={() => { if (canAdvanceSystem) void requestAiClue(); }}
               onStartAiGuess={() => { if (canAdvanceSystem) void startAiGuess(); }}
-              onFinishHumanGuess={() => dispatchHumanAction({ type: "finish-guess" }, () => void finishHumanGuess())}
+              onFinishHumanGuess={() => dispatchHumanAction(
+                { type: "finish-guess", seatId: localSeatId ?? "" },
+                () => { if (localSeatId) void voteToFinish(localSeatId); }
+              )}
               onContinue={() => { if (canAdvanceSystem) continueToNextTurn(); }}
               onNewGame={() => { if (canAdvanceSystem) void startNewGame(); }}
             />
@@ -770,6 +842,8 @@ export function App() {
         open={playersOpen}
         seats={displaySeats}
         tuning={tuning}
+        autoPlay={autoPlay}
+        timerEnabled={timerEnabled}
         localSeatId={localSeatId}
         canManageLobby={canManageLobby}
         networkRole={network.role}
@@ -779,6 +853,12 @@ export function App() {
         networkParticipants={lobby.participants}
         onSeatsChange={changeSeats}
         onTuningChange={(nextTuning) => { if (canManageLobby) setTuning(nextTuning); }}
+        onRulesChange={(rules) => {
+          if (!canManageLobby) return;
+          setAutoPlay(rules.autoPlay);
+          if (rules.timerEnabled !== timerEnabled) setPhaseStartedAt(Date.now());
+          setTimerEnabled(rules.timerEnabled);
+        }}
         onLocalSeatChange={changeLocalSeat}
         onClose={() => setPlayersOpen(false)}
         onNewGame={() => { if (canControlSystem) void startNewGame(); }}
@@ -809,8 +889,6 @@ export function App() {
         onShowTraceChange={setShowTrace}
         showKey={showKey}
         onShowKeyChange={setShowKey}
-        autoPlay={autoPlay}
-        onAutoPlayChange={setAutoPlay}
         onNewGame={() => { if (canControlSystem) void startNewGame(); }}
         onClose={() => setDeveloperOpen(false)}
       />

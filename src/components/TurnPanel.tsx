@@ -8,10 +8,11 @@ import { ChoiceSelect, type ChoiceOption } from "./ChoiceSelect.js";
 export type GamePhase = "clue" | "guess" | "result";
 
 export interface VoteStatus {
-  currentVoterName: string | null;
   cast: number;
   total: number;
   message: string | null;
+  finishCast: number;
+  localFinishVoted: boolean;
 }
 
 interface TurnPanelProps {
@@ -187,7 +188,7 @@ export function TurnPanel(props: TurnPanelProps) {
             <strong>{props.clue.word}</strong>
             <span><b>{props.clue.number}</b></span>
           </div>
-          <h2>{props.voteStatus?.currentVoterName ?? operativeNames(props.seats, props.team)}</h2>
+          <h2>{operativeNames(props.seats, props.team)}</h2>
           {allOperativesAi ? (
             <>
               <div className="turn-tuning">
@@ -212,13 +213,21 @@ export function TurnPanel(props: TurnPanelProps) {
                 <div className={`vote-status${props.voteStatus.message ? " has-message" : ""}`}>
                   <span>Согласование команды</span>
                   <strong>{props.voteStatus.cast}/{props.voteStatus.total}</strong>
-                  <small>{props.voteStatus.message ?? `Сейчас выбирает: ${props.voteStatus.currentVoterName}`}</small>
+                  <small>{props.voteStatus.message ?? (props.voteStatus.cast ? "Выборы отмечены на карточках" : "Каждый оперативник выбирает карточку")}</small>
                 </div>
               ) : (
                 <div className="guess-progress"><span>Открыто в этом ходу</span><strong>{props.pickedCount}</strong></div>
               )}
-              <button className="game-action game-action--quiet" type="button" aria-busy={props.loading} disabled={props.loading || !props.canFinishHumanGuess || !props.hostAvailable} onClick={props.onFinishHumanGuess}>
-                {!props.hostAvailable ? "Связь с хозяином потеряна" : !props.lobbyReady ? "Ждём игроков" : !props.canFinishHumanGuess ? "Ожидаем оперативника" : props.pickedCount ? "Закончить ход" : "Пропустить ход"}
+              <button className={`game-action game-action--quiet${props.voteStatus?.localFinishVoted ? " is-voted" : ""}`} type="button" aria-busy={props.loading} disabled={props.loading || !props.canFinishHumanGuess || !props.hostAvailable} onClick={props.onFinishHumanGuess}>
+                {!props.hostAvailable
+                  ? "Связь с хозяином потеряна"
+                  : !props.lobbyReady
+                    ? "Ждём игроков"
+                    : !props.canFinishHumanGuess
+                      ? "Ожидаем оперативника"
+                      : props.voteStatus?.localFinishVoted
+                        ? `Отменить остановку · ${props.voteStatus.finishCast}/${props.voteStatus.total}`
+                        : `Остановиться · ${props.voteStatus?.finishCast ?? 0}/${props.voteStatus?.total ?? 1}`}
               </button>
             </>
           )}

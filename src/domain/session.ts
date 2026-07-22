@@ -16,6 +16,7 @@ export interface PersistedSession {
   lastRecord: TurnRecord | null;
   pickedIndices: number[];
   votes: Record<string, number>;
+  finishVotes: Record<string, boolean>;
   voteCursor: number;
   voteMessage: string | null;
   manualClue: string;
@@ -24,6 +25,8 @@ export interface PersistedSession {
   showTrace: boolean;
   showKey: boolean;
   autoPlay: boolean;
+  timerEnabled: boolean;
+  phaseStartedAt: number;
 }
 
 export function loadSession(): PersistedSession | null {

@@ -10,6 +10,8 @@ interface PackedLexicon {
   stems: string[];
 }
 
+type PackedWordNet = Record<string, Array<[word: string, score: number]>>;
+
 async function fetchChecked(url: string): Promise<Response> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Не удалось загрузить модель: ${response.status} ${url}`);
@@ -31,6 +33,7 @@ export class BrowserPackedSemanticSpace implements SemanticSpace {
   private readonly wordIndex = new Map<string, number>();
   private readonly boardIndices: number[];
   private readonly boardRows = new Map<number, number>();
+  private readonly wordNet: PackedWordNet;
 
   private constructor(
     metadata: PackedMeta,
@@ -39,7 +42,8 @@ export class BrowserPackedSemanticSpace implements SemanticSpace {
     norms: Float32Array,
     neighbors: Uint32Array,
     neighborScores: Int16Array,
-    boardIndices: number[]
+    boardIndices: number[],
+    wordNet: PackedWordNet
   ) {
     this.metadata = metadata;
     this.words = lexicon.words;
@@ -49,23 +53,25 @@ export class BrowserPackedSemanticSpace implements SemanticSpace {
     this.neighbors = neighbors;
     this.neighborScores = neighborScores;
     this.boardIndices = boardIndices;
+    this.wordNet = wordNet;
     this.words.forEach((word, index) => this.wordIndex.set(canonicalWord(word), index));
     this.boardIndices.forEach((wordIndex, row) => this.boardRows.set(wordIndex, row));
   }
 
   static async load(baseUrl: string): Promise<BrowserPackedSemanticSpace> {
-    const files = ["meta.json", "lexicon.json", "vectors.i8", "norms.f32", "neighbors.u32", "neighbor-scores.i16", "board.json"];
+    const files = ["meta.json", "lexicon.json", "vectors.i8", "norms.f32", "neighbors.u32", "neighbor-scores.i16", "board.json", "wordnet.json"];
     const responses = await Promise.all(files.map((file) => fetchChecked(assetUrl(baseUrl, file))));
-    const [metadata, lexicon, vectors, norms, neighbors, neighborScores, boardIndices] = await Promise.all([
+    const [metadata, lexicon, vectors, norms, neighbors, neighborScores, boardIndices, wordNet] = await Promise.all([
       responses[0].json() as Promise<PackedMeta>,
       responses[1].json() as Promise<PackedLexicon>,
       responses[2].arrayBuffer().then((buffer) => new Int8Array(buffer)),
       responses[3].arrayBuffer().then((buffer) => new Float32Array(buffer)),
       responses[4].arrayBuffer().then((buffer) => new Uint32Array(buffer)),
       responses[5].arrayBuffer().then((buffer) => new Int16Array(buffer)),
-      responses[6].json() as Promise<number[]>
+      responses[6].json() as Promise<number[]>,
+      responses[7].json() as Promise<PackedWordNet>
     ]);
-    return new BrowserPackedSemanticSpace(metadata, lexicon, vectors, norms, neighbors, neighborScores, boardIndices);
+    return new BrowserPackedSemanticSpace(metadata, lexicon, vectors, norms, neighbors, neighborScores, boardIndices, wordNet);
   }
 
   hasWord(word: string): boolean {
@@ -114,6 +120,10 @@ export class BrowserPackedSemanticSpace implements SemanticSpace {
       }))
       .sort((first, second) => second.score - first.score)
       .slice(0, limit);
+  }
+
+  lexicalNeighbors(word: string): Array<{ word: string; score: number }> {
+    return (this.wordNet[canonicalWord(word)] ?? []).map(([candidate, score]) => ({ word: candidate, score }));
   }
 
   candidatePool(targetWords: readonly string[], perWord = 128): string[] {

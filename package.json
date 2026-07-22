@@ -10,7 +10,7 @@
     "build": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.json --noEmit && vite build",
     "prestart": "npm run build",
     "start": "tsx server/index.ts",
-    "prepare:model": "python -m pip install -r requirements-model.txt && python scripts/prepare_model.py",
+    "prepare:model": "python -m pip install -r requirements-model.txt && python scripts/prepare_model.py && python -m ruwordnet download && python scripts/prepare_lexical.py",
     "simulate": "tsx scripts/simulate.ts",
     "simulate:full": "tsx scripts/simulate.ts --games 10000 --seed 20260722 --output data/evaluations/10000-games.json",
     "test": "vitest run",

@@ -11,6 +11,8 @@ interface PlayersModalProps {
   open: boolean;
   seats: TeamSeats;
   tuning: AiTuning;
+  autoPlay: boolean;
+  timerEnabled: boolean;
   localSeatId: string | null;
   canManageLobby: boolean;
   networkRole: NetworkRole;
@@ -20,6 +22,7 @@ interface PlayersModalProps {
   networkParticipants: LobbyParticipant[];
   onSeatsChange: (seats: TeamSeats) => void;
   onTuningChange: (tuning: AiTuning) => void;
+  onRulesChange: (rules: { autoPlay: boolean; timerEnabled: boolean }) => void;
   onLocalSeatChange: (seatId: string | null) => void;
   onClose: () => void;
   onNewGame: () => void;
@@ -103,6 +106,8 @@ export function PlayersModal(props: PlayersModalProps) {
   const [networkError, setNetworkError] = useState<string | null>(null);
   const [draftSeats, setDraftSeats] = useState<TeamSeats>(() => cloneSeats(props.seats));
   const [draftTuning, setDraftTuning] = useState<AiTuning>(() => structuredClone(props.tuning));
+  const [draftAutoPlay, setDraftAutoPlay] = useState(props.autoPlay);
+  const [draftTimerEnabled, setDraftTimerEnabled] = useState(props.timerEnabled);
   const [draftLocalSeatId, setDraftLocalSeatId] = useState<string | null>(props.localSeatId);
   const [removingSeatIds, setRemovingSeatIds] = useState<Set<string>>(() => new Set());
   const [roomOpen, setRoomOpen] = useState(false);
@@ -113,6 +118,8 @@ export function PlayersModal(props: PlayersModalProps) {
     if (!props.open) return;
     setDraftSeats(cloneSeats(props.seats));
     setDraftTuning(structuredClone(props.tuning));
+    setDraftAutoPlay(props.autoPlay);
+    setDraftTimerEnabled(props.timerEnabled);
     setDraftLocalSeatId(props.localSeatId);
     setRemovingSeatIds(new Set());
     setRoomOpen(props.networkRole !== "offline");
@@ -122,7 +129,9 @@ export function PlayersModal(props: PlayersModalProps) {
     if (!props.open || props.networkRole !== "guest") return;
     setDraftSeats(cloneSeats(props.seats));
     setDraftTuning(structuredClone(props.tuning));
-  }, [props.localSeatId, props.networkRole, props.seats, props.tuning]);
+    setDraftAutoPlay(props.autoPlay);
+    setDraftTimerEnabled(props.timerEnabled);
+  }, [props.autoPlay, props.localSeatId, props.networkRole, props.seats, props.timerEnabled, props.tuning]);
 
   useEffect(() => {
     if (!props.open || props.networkRole === "offline") return;
@@ -222,6 +231,7 @@ export function PlayersModal(props: PlayersModalProps) {
     if (!props.canManageLobby) return;
     props.onSeatsChange(cloneSeats(draftSeats));
     props.onTuningChange(structuredClone(draftTuning));
+    props.onRulesChange({ autoPlay: draftAutoPlay, timerEnabled: draftTimerEnabled });
     props.onLocalSeatChange(draftLocalSeatId);
   }
 
@@ -319,6 +329,17 @@ export function PlayersModal(props: PlayersModalProps) {
             </section>
           ))}
         </div>
+
+        <section className="lobby-rules" aria-label="Правила хода">
+          <label className="check-setting">
+            <input type="checkbox" checked={draftAutoPlay} disabled={!props.canManageLobby} onChange={(event) => setDraftAutoPlay(event.target.checked)} />
+            <span>Автопилот ИИ</span>
+          </label>
+          <label className="check-setting">
+            <input type="checkbox" checked={draftTimerEnabled} disabled={!props.canManageLobby} onChange={(event) => setDraftTimerEnabled(event.target.checked)} />
+            <span>Таймер · первый ход 2:00, дальше 1:00</span>
+          </label>
+        </section>
 
         <section className={`room-foundation${roomOpen ? " is-open" : ""}`}>
           <button className="room-foundation__summary" type="button" aria-expanded={roomOpen} onClick={() => setRoomOpen((current) => !current)}>

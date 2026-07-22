@@ -5,6 +5,7 @@ export interface SemanticSpace {
   hasWord(word: string): boolean;
   similarity(first: string, second: string): number | null;
   neighborsWithScores(word: string, limit?: number): Array<{ word: string; score: number }>;
+  lexicalNeighbors(word: string): Array<{ word: string; score: number }>;
   nearestFor(word: string, limit?: number): string[];
   candidatePool(targetWords: readonly string[], perWord?: number): string[];
   boardWords(): readonly string[];

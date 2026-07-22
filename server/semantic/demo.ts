@@ -115,6 +115,10 @@ export class DemoSemanticSpace implements SemanticSpace {
     return this.neighborCache.get(canonicalWord(word))?.slice(0, limit) ?? [];
   }
 
+  lexicalNeighbors(): Array<{ word: string; score: number }> {
+    return [];
+  }
+
   candidatePool(targetWords: readonly string[], perWord = 128): string[] {
     const candidates = new Set<string>();
     for (const word of targetWords) {

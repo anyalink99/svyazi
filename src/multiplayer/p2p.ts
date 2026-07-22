@@ -13,13 +13,12 @@ export type SharedSession = Omit<
   | "remainingDraft"
   | "showTrace"
   | "showKey"
-  | "autoPlay"
 > & { loading: boolean; lobby: LobbyState };
 
 export type MultiplayerCommand =
   | { type: "claim-seat"; seatId: string | null; resume?: boolean }
   | { type: "submit-clue"; clue: string; number: number; remainingDraft: Record<string, number> }
-  | { type: "finish-guess" }
+  | { type: "finish-guess"; seatId: string }
   | { type: "choose-card"; index: number; seatId: string };
 
 export interface PeerInfo {
@@ -69,7 +68,9 @@ function parseCommand(raw: string): MultiplayerCommand | null {
     if (value.type === "claim-seat" && (typeof value.seatId === "string" || value.seatId === null)) {
       return { type: "claim-seat", seatId: value.seatId, resume: value.resume === true };
     }
-    if (value.type === "finish-guess") return { type: "finish-guess" };
+    if (value.type === "finish-guess" && typeof value.seatId === "string") {
+      return { type: "finish-guess", seatId: value.seatId };
+    }
     if (
       value.type === "choose-card" && Number.isInteger(value.index) &&
       (value.index as number) >= 0 && (value.index as number) < 25 && typeof value.seatId === "string"

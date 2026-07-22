@@ -13,8 +13,6 @@ interface DeveloperModalProps {
   onShowTraceChange: (value: boolean) => void;
   showKey: boolean;
   onShowKeyChange: (value: boolean) => void;
-  autoPlay: boolean;
-  onAutoPlayChange: (value: boolean) => void;
   onNewGame: () => void;
   onClose: () => void;
 }
@@ -30,7 +28,7 @@ export function DeveloperModal(props: DeveloperModalProps) {
           <button type="button" onClick={props.onClose} aria-label="Закрыть">×</button>
         </header>
 
-        <p className="lab-intro">Здесь сохранены все инструменты исходного интерфейса: модель, характер ИИ, автопилот, ключ поля, семантические ранги и массовые симуляции.</p>
+        <p className="lab-intro">Здесь сохранены дополнительные инструменты: модель, характер ИИ, ключ поля, семантические ранги и массовые симуляции.</p>
 
         <div className="model-summary">
           <span className={`model-light${props.model?.kind === "navec" ? " is-ready" : ""}`} />
@@ -40,7 +38,6 @@ export function DeveloperModal(props: DeveloperModalProps) {
 
         <div className="lab-settings">
           <label><span>Характер ИИ-оперативника</span><select value={props.profile} onChange={(event) => props.onProfileChange(event.target.value as OperativeProfile)}><option value="cautious">Осторожный</option><option value="balanced">Сбалансированный</option><option value="daring">Рискованный</option></select></label>
-          <label className="check-setting"><input type="checkbox" checked={props.autoPlay} onChange={(event) => props.onAutoPlayChange(event.target.checked)} /><span>Автопилот для ролей ИИ</span></label>
           <label className="check-setting"><input type="checkbox" checked={props.showTrace} onChange={(event) => props.onShowTraceChange(event.target.checked)} /><span>Семантический след и ранги</span></label>
           <label className="check-setting"><input type="checkbox" checked={props.showKey} onChange={(event) => props.onShowKeyChange(event.target.checked)} /><span>Принудительно показать ключ</span></label>
         </div>

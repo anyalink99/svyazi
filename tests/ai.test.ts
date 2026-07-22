@@ -94,6 +94,32 @@ describe("semantic agents", () => {
     expect(refreshTrackedClueRemainders(state, "red").history[0].remaining).toBe(1);
   });
 
+  it("does not close a clue when an unrelated same-team card was revealed", () => {
+    const cards = board.map((card) => ({ ...card }));
+    cards.find((card) => card.word === "планета")!.revealed = true;
+    const state: GameState = {
+      id: "unrelated-own-card",
+      seed: 32,
+      cards,
+      turn: "red",
+      startingTeam: "red",
+      turnNumber: 3,
+      winner: null,
+      history: [{
+        turn: 1,
+        team: "red",
+        clue: "космос",
+        number: 2,
+        targetWords: ["ракета", "звезда"],
+        guesses: [],
+        remaining: 2,
+        endedBy: "stopped"
+      }]
+    };
+
+    expect(refreshTrackedClueRemainders(state, "red").history[0].remaining).toBe(2);
+  });
+
   it("lets an operative rank cards without a role map", () => {
     const publicCards = board.map(({ word, revealed }) => ({ word, revealed }));
     const guesses = planGuesses(semantic, publicCards, "космос", 3, "balanced", 7);
@@ -164,7 +190,7 @@ describe("semantic agents", () => {
 
     expect(resolved.revealed.map((guess) => guess.word)).toEqual(["ракета", "звезда", "планета"]);
     expect(resolved.state.history).toHaveLength(1);
-    expect(resolved.record.remaining).toBe(0);
+    expect(resolved.record.remaining).toBe(1);
     expect(resolved.state.winner).toBe("red");
     expect(state.cards[0].revealed).toBe(false);
   });
