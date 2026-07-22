@@ -1,0 +1,5 @@
+navec==0.10.0
+numpy>=1.26,<3
+pymorphy3>=2.0.3,<3
+snowballstemmer>=3.0.1,<4
+wordfreq>=3.1.1,<4

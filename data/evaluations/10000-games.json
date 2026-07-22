@@ -1,0 +1,29 @@
+{
+  "model": {
+    "formatVersion": 1,
+    "kind": "navec",
+    "source": "Navec hudlit v1, 12B tokens, 500K vocabulary",
+    "dimension": 128,
+    "vocabularySize": 50000,
+    "boardWordCount": 2500,
+    "neighborsPerBoardWord": 192,
+    "generatedAt": "2026-07-21T22:26:42Z"
+  },
+  "simulation": {
+    "games": 10000,
+    "seed": 20260722,
+    "redWins": 5042,
+    "blueWins": 4958,
+    "assassinFinishes": 994,
+    "averageTurns": 10.3151,
+    "averageClueNumber": 1.6601099359191864,
+    "averageCorrectPerTurn": 1.3730550358212716,
+    "clueNumberDistribution": {
+      "1": 61376,
+      "2": 21722,
+      "3": 13790,
+      "4": 6263
+    },
+    "durationMs": 356931.7035
+  }
+}
