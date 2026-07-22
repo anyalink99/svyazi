@@ -3122,7 +3122,7 @@ select { padding: 7px 9px; }
 
 .operative-slot__inner {
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .operative-slot.is-removing {
@@ -3130,6 +3130,10 @@ select { padding: 7px 9px; }
   opacity: 0;
   transform: translateY(-6px);
   pointer-events: none;
+}
+
+.operative-slot.is-removing .operative-slot__inner {
+  overflow: hidden;
 }
 
 @keyframes operative-slot-in {
