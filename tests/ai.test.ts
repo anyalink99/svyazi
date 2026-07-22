@@ -54,6 +54,22 @@ describe("semantic agents", () => {
     expect(guesses.picks.every((pick) => ["ракета", "звезда", "планета"].includes(pick.word))).toBe(true);
   });
 
+  it("keeps unresolved earlier clues in the operative's semantic context", () => {
+    const publicCards = board.map(({ word, revealed }) => ({ word, revealed }));
+    const guesses = planGuesses(
+      semantic,
+      publicCards,
+      "космос",
+      1,
+      "balanced",
+      7,
+      [{ clue: "музыка", remaining: 1 }]
+    );
+
+    expect(guesses.picks.some((pick) => ["гитара", "скрипка"].includes(pick.word))).toBe(true);
+    expect(guesses.picks.some((pick) => ["ракета", "звезда", "планета"].includes(pick.word))).toBe(true);
+  });
+
   it("plays a complete agent turn and records it", () => {
     const state: GameState = {
       id: "test",
@@ -87,10 +103,29 @@ describe("semantic agents", () => {
     const clue = analyzeProvidedClue(semantic, state, "космос", 1);
     const resolved = resolveGuesses(state, clue, [0, 1, 2]);
 
-    expect(resolved.revealed.map((guess) => guess.word)).toEqual(["ракета", "звезда"]);
+    expect(resolved.revealed.map((guess) => guess.word)).toEqual(["ракета", "звезда", "планета"]);
     expect(resolved.state.history).toHaveLength(1);
-    expect(resolved.state.turn).toBe("blue");
+    expect(resolved.record.remaining).toBe(0);
+    expect(resolved.state.winner).toBe("red");
     expect(state.cards[0].revealed).toBe(false);
+  });
+
+  it("accepts an out-of-vocabulary human clue when no AI must understand it", () => {
+    const state: GameState = {
+      id: "human-only-clue",
+      seed: 27,
+      cards: board.map((card) => ({ ...card })),
+      turn: "red",
+      startingTeam: "red",
+      turnNumber: 1,
+      winner: null,
+      history: []
+    };
+
+    expect(() => analyzeProvidedClue(semantic, state, "квантовость", 2)).toThrow(/словар/iu);
+    const clue = analyzeProvidedClue(semantic, state, "квантовость", 2, true);
+    expect(clue.rankings).toEqual([]);
+    expect(clue.candidateCount).toBe(0);
   });
 
   it("awards victory when the other team accidentally reveals the final agent", () => {

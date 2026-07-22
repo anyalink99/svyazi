@@ -6,6 +6,7 @@ import { createGame } from "../src/domain/game.js";
 import type { GameState, Team } from "../src/domain/types.js";
 import { checkClueLegality } from "./ai/legality.js";
 import { planGuesses } from "./ai/operative.js";
+import { unresolvedClues } from "../src/domain/clues.js";
 import { generateClue } from "./ai/spymaster.js";
 import { analyzeProvidedClue, resolveGuesses, runTurn } from "./ai/turn.js";
 import type { SemanticSpace } from "./semantic/space.js";
@@ -15,6 +16,7 @@ import { RoomStore } from "./rooms.js";
 const teamSchema = z.enum(["red", "blue"]);
 const roleSchema = z.enum(["red", "blue", "neutral", "assassin"]);
 const profileSchema = z.enum(["cautious", "balanced", "daring"]);
+const ambitionSchema = z.enum(["focused", "balanced", "broad"]);
 const controllerSchema = z.enum(["human", "ai"]);
 const participantRoleSchema = z.enum(["spymaster", "operative", "spectator"]);
 const cardSchema = z.object({
@@ -36,6 +38,7 @@ const turnRecordSchema = z.object({
       similarity: z.number()
     })
   ),
+  remaining: z.number().int().min(0).max(9).optional(),
   endedBy: z.enum(["limit", "wrong-card", "assassin", "victory", "stopped"])
 });
 const gameStateSchema = z.object({
@@ -97,7 +100,8 @@ export function createApp(semantic: SemanticSpace) {
           controller: controllerSchema.optional(),
           team: teamSchema.nullable().optional(),
           role: participantRoleSchema.optional(),
-          profile: profileSchema.optional()
+          profile: profileSchema.optional(),
+          ambition: ambitionSchema.optional()
         })
         .parse(request.body);
       response.status(201).json(rooms.join(String(request.params.code), body));
@@ -114,6 +118,7 @@ export function createApp(semantic: SemanticSpace) {
           team: teamSchema.nullable().optional(),
           role: participantRoleSchema.optional(),
           profile: profileSchema.optional(),
+          ambition: ambitionSchema.optional(),
           connected: z.boolean().optional()
         })
         .parse(request.body);
@@ -142,6 +147,7 @@ export function createApp(semantic: SemanticSpace) {
           state: gameStateSchema,
           team: teamSchema.optional(),
           maxNumber: z.number().int().min(1).max(9).optional(),
+          ambition: ambitionSchema.optional(),
           neighborsPerTarget: z.number().int().min(16).max(192).optional()
         })
         .parse(request.body);
@@ -149,6 +155,7 @@ export function createApp(semantic: SemanticSpace) {
       response.json(
         generateClue(semantic, state.cards, body.team ?? state.turn, {
           maxNumber: body.maxNumber,
+          ambition: body.ambition,
           neighborsPerTarget: body.neighborsPerTarget
         })
       );
@@ -162,10 +169,11 @@ export function createApp(semantic: SemanticSpace) {
         .object({
           state: gameStateSchema,
           clue: z.string().min(1).max(32),
-          number: z.number().int().min(1).max(9)
+          number: z.number().int().min(1).max(9),
+          allowUnknown: z.boolean().optional()
         })
         .parse(request.body);
-      response.json(analyzeProvidedClue(semantic, body.state as GameState, body.clue, body.number));
+      response.json(analyzeProvidedClue(semantic, body.state as GameState, body.clue, body.number, body.allowUnknown));
     })
   );
 
@@ -188,7 +196,8 @@ export function createApp(semantic: SemanticSpace) {
           body.clue,
           body.number,
           body.profile,
-          body.seed ?? body.state.seed + body.state.turnNumber
+          body.seed ?? body.state.seed + body.state.turnNumber,
+          unresolvedClues(body.state.history as GameState["history"], body.state.turn)
         )
       );
     })
@@ -203,7 +212,9 @@ export function createApp(semantic: SemanticSpace) {
           profile: profileSchema.default("balanced"),
           clue: z.string().min(1).max(32).optional(),
           number: z.number().int().min(1).max(9).optional(),
-          maxClueNumber: z.number().int().min(1).max(9).optional()
+          maxClueNumber: z.number().int().min(1).max(9).optional(),
+          clueAmbition: ambitionSchema.optional(),
+          allowUnknownClue: z.boolean().optional()
         })
         .parse(request.body);
       response.json(
@@ -211,7 +222,9 @@ export function createApp(semantic: SemanticSpace) {
           profile: body.profile,
           providedClue: body.clue,
           providedNumber: body.number,
-          maxClueNumber: body.maxClueNumber
+          maxClueNumber: body.maxClueNumber,
+          clueAmbition: body.clueAmbition,
+          allowUnknownClue: body.allowUnknownClue
         })
       );
     })
@@ -225,12 +238,13 @@ export function createApp(semantic: SemanticSpace) {
           state: gameStateSchema,
           clue: z.string().min(1).max(32),
           number: z.number().int().min(1).max(9),
-          picks: z.array(z.number().int().min(0).max(24)).max(10),
-          stoppedEarly: z.boolean().optional()
+          picks: z.array(z.number().int().min(0).max(24)).max(25),
+          stoppedEarly: z.boolean().optional(),
+          allowUnknown: z.boolean().optional()
         })
         .parse(request.body);
       const state = body.state as GameState;
-      const analysis = analyzeProvidedClue(semantic, state, body.clue, body.number);
+      const analysis = analyzeProvidedClue(semantic, state, body.clue, body.number, body.allowUnknown);
       response.json({
         clue: analysis,
         ...resolveGuesses(state, analysis, body.picks, body.stoppedEarly)

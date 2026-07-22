@@ -1,5 +1,7 @@
 import { cloneGame, otherTeam, remainingForTeam } from "../../src/domain/game.js";
+import { unresolvedClues } from "../../src/domain/clues.js";
 import type {
+  ClueAmbition,
   ClueAnalysis,
   GameState,
   GuessPlan,
@@ -18,7 +20,9 @@ export interface TurnOptions {
   providedClue?: string;
   providedNumber?: number;
   maxClueNumber?: number;
+  clueAmbition?: ClueAmbition;
   neighborsPerTarget?: number;
+  allowUnknownClue?: boolean;
 }
 
 export interface TurnResult {
@@ -32,11 +36,13 @@ export function analyzeProvidedClue(
   semantic: SemanticSpace,
   state: GameState,
   clue: string,
-  number: number
+  number: number,
+  allowUnknown = false
 ): ClueAnalysis {
   const legality = checkClueLegality(clue, state.cards.map((card) => card.word), semantic);
   if (!legality.legal) throw new Error(legality.reason ?? "Недопустимая подсказка.");
-  if (!semantic.hasWord(clue)) throw new Error(`Слова «${clue}» нет в семантическом словаре.`);
+  const knownClue = semantic.hasWord(clue);
+  if (!knownClue && !allowUnknown) throw new Error(`Слова «${clue}» нет в семантическом словаре.`);
 
   const rankings = state.cards
     .map((card, index) => ({ card, index }))
@@ -44,7 +50,7 @@ export function analyzeProvidedClue(
     .map<RankedCard>(({ card, index }) => ({
       index,
       word: card.word,
-      similarity: semantic.similarity(clue, card.word) ?? -1,
+      similarity: knownClue ? (semantic.similarity(clue, card.word) ?? -1) : -1,
       rank: 0,
       role: card.role
     }))
@@ -52,21 +58,21 @@ export function analyzeProvidedClue(
   rankings.forEach((card, index) => {
     card.rank = index + 1;
   });
-  const targetWords = rankings.slice(0, number).map((card) => card.word);
+  const targetWords = knownClue ? rankings.slice(0, number).map((card) => card.word) : [];
   const weakestTarget = rankings[Math.max(0, number - 1)]?.similarity ?? 0;
-  const strongestDanger = rankings.find((card) => card.role !== state.turn) ?? null;
-  const margin = weakestTarget - (strongestDanger?.similarity ?? -1);
+  const strongestDanger = knownClue ? (rankings.find((card) => card.role !== state.turn) ?? null) : null;
+  const margin = knownClue ? weakestTarget - (strongestDanger?.similarity ?? -1) : 0;
 
   return {
     word: clue,
     number,
     score: 0,
-    confidence: 1 / (1 + Math.exp(-margin * 12)),
+    confidence: knownClue ? 1 / (1 + Math.exp(-margin * 12)) : 0,
     margin,
     targetWords,
     strongestDanger: strongestDanger?.word ?? null,
-    candidateCount: 1,
-    rankings: rankings.slice(0, 10)
+    candidateCount: knownClue ? 1 : 0,
+    rankings: knownClue ? rankings.slice(0, 10) : []
   };
 }
 
@@ -80,9 +86,10 @@ export function runTurn(
   const team = state.turn;
   const providedNumber = Math.max(1, Math.min(9, options.providedNumber ?? 1));
   const clue = options.providedClue
-    ? analyzeProvidedClue(semantic, state, options.providedClue, providedNumber)
+    ? analyzeProvidedClue(semantic, state, options.providedClue, providedNumber, options.allowUnknownClue)
     : generateClue(semantic, state.cards, team, {
-        maxNumber: options.maxClueNumber ?? 4,
+        ambition: options.clueAmbition,
+        maxNumber: options.maxClueNumber,
         neighborsPerTarget: options.neighborsPerTarget
       });
   const plan = planGuesses(
@@ -91,7 +98,8 @@ export function runTurn(
     clue.word,
     clue.number,
     options.profile ?? "balanced",
-    (state.seed + state.turnNumber * 7919) >>> 0
+    (state.seed + state.turnNumber * 7919) >>> 0,
+    unresolvedClues(state.history, team)
   );
 
   const resolved = resolveGuesses(state, clue, plan.picks.map((pick) => pick.index), plan.stoppedEarly);
@@ -114,8 +122,8 @@ export function resolveGuesses(
   const state = cloneGame(inputState);
   const team = state.turn;
   const revealed: RevealedGuess[] = [];
-  const uniquePicks = [...new Set(pickIndices)].slice(0, clue.number + 1);
-  let endedBy: TurnRecord["endedBy"] = stoppedEarly || uniquePicks.length === 0 ? "stopped" : "limit";
+  const uniquePicks = [...new Set(pickIndices)];
+  let endedBy: TurnRecord["endedBy"] = "stopped";
 
   for (const pickIndex of uniquePicks) {
     const ranking = clue.rankings.find((item) => item.index === pickIndex);
@@ -153,6 +161,7 @@ export function resolveGuesses(
     number: clue.number,
     targetWords: clue.targetWords,
     guesses: revealed,
+    remaining: Math.max(0, clue.number - revealed.filter((guess) => guess.role === team).length),
     endedBy
   };
   state.history.push(record);

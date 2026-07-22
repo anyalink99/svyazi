@@ -1,48 +1,88 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api.js";
-import type { ControllerKind, SeatAssignment, TeamSeats } from "../domain/multiplayer.js";
-import type { Team } from "../domain/types.js";
+import type { AiTuning, ControllerKind, SeatAssignment, TeamSeats } from "../domain/multiplayer.js";
+import { cloneSeats, DEFAULT_AI_TUNING } from "../domain/setup.js";
+import type { ClueAmbition, OperativeProfile, Team } from "../domain/types.js";
 import { useModalPresence } from "../hooks/useModalPresence.js";
+import { ChoiceSelect, type ChoiceOption } from "./ChoiceSelect.js";
 
 interface PlayersModalProps {
   open: boolean;
   seats: TeamSeats;
+  tuning: AiTuning;
+  localSeatId: string | null;
   onSeatsChange: (seats: TeamSeats) => void;
+  onTuningChange: (tuning: AiTuning) => void;
+  onLocalSeatChange: (seatId: string | null) => void;
   onClose: () => void;
   onNewGame: () => void;
 }
 
-const PRESETS: Array<{ label: string; detail: string; seats: TeamSeats }> = [
+interface SetupPreset {
+  label: string;
+  detail: string;
+  seats: TeamSeats;
+  localSeatId: string | null;
+}
+
+const CONTROLLER_OPTIONS: ChoiceOption<ControllerKind>[] = [
+  { value: "human", label: "Человек" },
+  { value: "ai", label: "ИИ" }
+];
+
+const AMBITION_OPTIONS: ChoiceOption<ClueAmbition>[] = [
+  { value: "focused", label: "Точечно" },
+  { value: "balanced", label: "Умеренно" },
+  { value: "broad", label: "Широко" }
+];
+
+const RISK_OPTIONS: ChoiceOption<OperativeProfile>[] = [
+  { value: "cautious", label: "Осторожно" },
+  { value: "balanced", label: "Взвешенно" },
+  { value: "daring", label: "Рискованно" }
+];
+
+const PRESETS: SetupPreset[] = [
   {
     label: "Я угадываю",
     detail: "ИИ ведёт обе команды, вы играете за красных",
+    localSeatId: "preset-red-you",
     seats: {
-      red: { spymaster: { controller: "ai", name: "ИИ-ведущий" }, operative: { controller: "human", name: "Вы" } },
-      blue: { spymaster: { controller: "ai", name: "ИИ-ведущий" }, operative: { controller: "ai", name: "ИИ-оперативники" } }
+      red: { spymaster: { id: "preset-red-spy", controller: "ai", name: "ИИ-ведущий" }, operatives: [{ id: "preset-red-you", controller: "human", name: "Вы" }] },
+      blue: { spymaster: { id: "preset-blue-spy", controller: "ai", name: "ИИ-ведущий" }, operatives: [{ id: "preset-blue-ai", controller: "ai", name: "ИИ-оперативник" }] }
     }
   },
   {
     label: "Я ведущий",
-    detail: "Вы объясняете красным, остальные роли у ИИ",
+    detail: "Вы всегда видите ключ и объясняете красным",
+    localSeatId: "preset-red-spy-you",
     seats: {
-      red: { spymaster: { controller: "human", name: "Вы" }, operative: { controller: "ai", name: "ИИ-оперативники" } },
-      blue: { spymaster: { controller: "ai", name: "ИИ-ведущий" }, operative: { controller: "ai", name: "ИИ-оперативники" } }
+      red: { spymaster: { id: "preset-red-spy-you", controller: "human", name: "Вы" }, operatives: [{ id: "preset-red-ai", controller: "ai", name: "ИИ-оперативник" }] },
+      blue: { spymaster: { id: "preset-blue-spy-2", controller: "ai", name: "ИИ-ведущий" }, operatives: [{ id: "preset-blue-ai-2", controller: "ai", name: "ИИ-оперативник" }] }
     }
   },
   {
-    label: "Вдвоём против ИИ",
-    detail: "Один человек ведёт красных, второй угадывает",
+    label: "Угадываем вдвоём",
+    detail: "Два человека должны выбрать одну карточку",
+    localSeatId: "preset-red-op-1",
     seats: {
-      red: { spymaster: { controller: "human", name: "Ведущий красных" }, operative: { controller: "human", name: "Оперативники красных" } },
-      blue: { spymaster: { controller: "ai", name: "ИИ-ведущий" }, operative: { controller: "ai", name: "ИИ-оперативники" } }
+      red: {
+        spymaster: { id: "preset-red-spy-3", controller: "ai", name: "ИИ-ведущий" },
+        operatives: [
+          { id: "preset-red-op-1", controller: "human", name: "Игрок 1" },
+          { id: "preset-red-op-2", controller: "human", name: "Игрок 2" }
+        ]
+      },
+      blue: { spymaster: { id: "preset-blue-spy-3", controller: "ai", name: "ИИ-ведущий" }, operatives: [{ id: "preset-blue-ai-3", controller: "ai", name: "ИИ-оперативник" }] }
     }
   },
   {
     label: "Наблюдать",
-    detail: "Все четыре роли играют автоматически",
+    detail: "Все роли играют автоматически",
+    localSeatId: null,
     seats: {
-      red: { spymaster: { controller: "ai", name: "Красный ИИ-ведущий" }, operative: { controller: "ai", name: "Красный ИИ-оперативник" } },
-      blue: { spymaster: { controller: "ai", name: "Синий ИИ-ведущий" }, operative: { controller: "ai", name: "Синий ИИ-оперативник" } }
+      red: { spymaster: { id: "preset-red-spy-4", controller: "ai", name: "Красный ИИ-ведущий" }, operatives: [{ id: "preset-red-ai-4", controller: "ai", name: "Красный ИИ-оперативник" }] },
+      blue: { spymaster: { id: "preset-blue-spy-4", controller: "ai", name: "Синий ИИ-ведущий" }, operatives: [{ id: "preset-blue-ai-4", controller: "ai", name: "Синий ИИ-оперативник" }] }
     }
   }
 ];
@@ -50,20 +90,39 @@ const PRESETS: Array<{ label: string; detail: string; seats: TeamSeats }> = [
 function SeatEditor({
   label,
   value,
-  onChange
+  local,
+  removable,
+  onChange,
+  onMakeLocal,
+  onRemove
 }: {
   label: string;
   value: SeatAssignment;
+  local: boolean;
+  removable?: boolean;
   onChange: (value: SeatAssignment) => void;
+  onMakeLocal: () => void;
+  onRemove?: () => void;
 }) {
   return (
-    <div className="seat-editor">
+    <div className={`seat-editor${local ? " is-local" : ""}`}>
       <strong>{label}</strong>
-      <select value={value.controller} onChange={(event) => onChange({ ...value, controller: event.target.value as ControllerKind })}>
-        <option value="human">Человек</option>
-        <option value="ai">ИИ</option>
-      </select>
+      <ChoiceSelect
+        value={value.controller}
+        options={CONTROLLER_OPTIONS}
+        ariaLabel={`Тип игрока: ${label}`}
+        onChange={(controller) => onChange({ ...value, controller })}
+      />
       <input value={value.name} onChange={(event) => onChange({ ...value, name: event.target.value })} aria-label={`Имя: ${label}`} />
+      {value.controller === "human" ? (
+        <button
+          className="local-seat-button"
+          type="button"
+          aria-pressed={local}
+          onClick={onMakeLocal}
+        >{local ? "✓ Это вы" : "Это вы"}</button>
+      ) : <span className="local-seat-placeholder" aria-hidden="true" />}
+      {removable ? <button className="remove-seat-button" type="button" onClick={onRemove} aria-label={`Удалить: ${label}`}>×</button> : null}
     </div>
   );
 }
@@ -71,14 +130,73 @@ function SeatEditor({
 export function PlayersModal(props: PlayersModalProps) {
   const [roomCode, setRoomCode] = useState<string | null>(null);
   const [creatingRoom, setCreatingRoom] = useState(false);
+  const [draftSeats, setDraftSeats] = useState<TeamSeats>(() => cloneSeats(props.seats));
+  const [draftTuning, setDraftTuning] = useState<AiTuning>(() => structuredClone(props.tuning));
+  const [draftLocalSeatId, setDraftLocalSeatId] = useState<string | null>(props.localSeatId);
   const presence = useModalPresence(props.open, props.onClose);
+
+  useEffect(() => {
+    if (!props.open) return;
+    setDraftSeats(cloneSeats(props.seats));
+    setDraftTuning(structuredClone(props.tuning));
+    setDraftLocalSeatId(props.localSeatId);
+  }, [props.open]);
+
   if (!presence.mounted) return null;
 
-  function updateSeat(team: Team, role: "spymaster" | "operative", value: SeatAssignment) {
-    props.onSeatsChange({
-      ...props.seats,
-      [team]: { ...props.seats[team], [role]: value }
+  function changeSeat(nextSeats: TeamSeats, changed: SeatAssignment) {
+    setDraftSeats(nextSeats);
+    if (changed.controller === "ai" && draftLocalSeatId === changed.id) setDraftLocalSeatId(null);
+  }
+
+  function updateSpymaster(team: Team, value: SeatAssignment) {
+    changeSeat({ ...draftSeats, [team]: { ...draftSeats[team], spymaster: value } }, value);
+  }
+
+  function updateOperative(team: Team, index: number, value: SeatAssignment) {
+    const operatives = draftSeats[team].operatives.map((seat, seatIndex) => seatIndex === index ? value : seat);
+    changeSeat({ ...draftSeats, [team]: { ...draftSeats[team], operatives } }, value);
+  }
+
+  function addOperative(team: Team) {
+    const id = `${team}-operative-${crypto.randomUUID()}`;
+    setDraftSeats({
+      ...draftSeats,
+      [team]: {
+        ...draftSeats[team],
+        operatives: [...draftSeats[team].operatives, { id, controller: "human", name: `Игрок ${draftSeats[team].operatives.length + 1}` }]
+      }
     });
+  }
+
+  function removeOperative(team: Team, index: number) {
+    const removed = draftSeats[team].operatives[index];
+    if (draftSeats[team].operatives.length <= 1) return;
+    setDraftSeats({
+      ...draftSeats,
+      [team]: { ...draftSeats[team], operatives: draftSeats[team].operatives.filter((_, seatIndex) => seatIndex !== index) }
+    });
+    if (removed.id === draftLocalSeatId) setDraftLocalSeatId(null);
+  }
+
+  function updateTuning(team: Team, patch: Partial<AiTuning[Team]>) {
+    setDraftTuning({ ...draftTuning, [team]: { ...draftTuning[team], ...patch } });
+  }
+
+  function commitDraft() {
+    props.onSeatsChange(cloneSeats(draftSeats));
+    props.onTuningChange(structuredClone(draftTuning));
+    props.onLocalSeatChange(draftLocalSeatId);
+  }
+
+  function saveAndClose() {
+    commitDraft();
+    props.onClose();
+  }
+
+  function saveAndStart() {
+    commitDraft();
+    props.onNewGame();
   }
 
   async function createRoom() {
@@ -101,7 +219,11 @@ export function PlayersModal(props: PlayersModalProps) {
 
         <div className="preset-grid">
           {PRESETS.map((preset) => (
-            <button type="button" key={preset.label} onClick={() => props.onSeatsChange(structuredClone(preset.seats))}>
+            <button type="button" key={preset.label} onClick={() => {
+              setDraftSeats(cloneSeats(preset.seats));
+              setDraftTuning(structuredClone(DEFAULT_AI_TUNING));
+              setDraftLocalSeatId(preset.localSeatId);
+            }}>
               <strong>{preset.label}</strong><span>{preset.detail}</span>
             </button>
           ))}
@@ -111,20 +233,45 @@ export function PlayersModal(props: PlayersModalProps) {
           {(["red", "blue"] as Team[]).map((team) => (
             <section className={`team-seat-card is-${team}`} key={team}>
               <h3>{team === "red" ? "Красная команда" : "Синяя команда"}</h3>
-              <SeatEditor label="Ведущий" value={props.seats[team].spymaster} onChange={(value) => updateSeat(team, "spymaster", value)} />
-              <SeatEditor label="Оперативники" value={props.seats[team].operative} onChange={(value) => updateSeat(team, "operative", value)} />
+              <SeatEditor
+                label="Ведущий"
+                value={draftSeats[team].spymaster}
+                local={draftLocalSeatId === draftSeats[team].spymaster.id}
+                onChange={(value) => updateSpymaster(team, value)}
+                onMakeLocal={() => setDraftLocalSeatId(draftSeats[team].spymaster.id)}
+              />
+              <div className="operative-roster">
+                {draftSeats[team].operatives.map((operative, index) => (
+                  <SeatEditor
+                    key={operative.id}
+                    label={`Оперативник ${index + 1}`}
+                    value={operative}
+                    local={draftLocalSeatId === operative.id}
+                    removable={draftSeats[team].operatives.length > 1}
+                    onChange={(value) => updateOperative(team, index, value)}
+                    onMakeLocal={() => setDraftLocalSeatId(operative.id)}
+                    onRemove={() => removeOperative(team, index)}
+                  />
+                ))}
+                <button className="add-operative-button" type="button" onClick={() => addOperative(team)}>+ Добавить оперативника</button>
+              </div>
+              <div className="team-ai-settings">
+                <div><span>Охват ведущего ИИ</span><ChoiceSelect value={draftTuning[team].ambition} options={AMBITION_OPTIONS} ariaLabel={`Охват ведущего ИИ, ${team}`} onChange={(ambition) => updateTuning(team, { ambition })} /></div>
+                <div><span>Риск оперативников ИИ</span><ChoiceSelect value={draftTuning[team].risk} options={RISK_OPTIONS} ariaLabel={`Риск оперативников ИИ, ${team}`} onChange={(risk) => updateTuning(team, { risk })} /></div>
+              </div>
             </section>
           ))}
         </div>
 
-        <section className="room-foundation">
-          <div><strong>Сетевая комната</strong><span>REST-основа уже работает; синхронизация клиентов будет следующим слоем.</span></div>
+        <details className="room-foundation">
+          <summary>Сетевая комната</summary>
+          <div><span>Состав и голоса уже готовы; синхронизацию подключим следующим слоем.</span></div>
           {roomCode ? <code>{roomCode}</code> : <button type="button" aria-busy={creatingRoom} disabled={creatingRoom} onClick={() => void createRoom()}>{creatingRoom ? "Создаю…" : "Создать код"}</button>}
-        </section>
+        </details>
 
         <footer className="modal-actions">
-          <button className="game-action game-action--quiet" type="button" onClick={props.onClose}>Продолжить партию</button>
-          <button className="game-action" type="button" onClick={props.onNewGame}>Новое поле с этими ролями</button>
+          <button className="game-action game-action--quiet" type="button" onClick={saveAndClose}>Сохранить и продолжить</button>
+          <button className="game-action" type="button" onClick={saveAndStart}>Новое поле с этим составом</button>
         </footer>
       </section>
     </div>

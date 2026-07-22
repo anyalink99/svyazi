@@ -5,7 +5,7 @@ import type {
   Participant,
   PlayerRole
 } from "../src/domain/multiplayer.js";
-import type { OperativeProfile, Team } from "../src/domain/types.js";
+import type { ClueAmbition, OperativeProfile, Team } from "../src/domain/types.js";
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -61,6 +61,7 @@ export class RoomStore {
       team?: Team | null;
       role?: PlayerRole;
       profile?: OperativeProfile;
+      ambition?: ClueAmbition;
     }
   ): GameRoom {
     const room = this.requireMutable(code);
@@ -71,6 +72,7 @@ export class RoomStore {
       team: input.team ?? null,
       role: input.role ?? "spectator",
       profile: input.profile,
+      ambition: input.ambition,
       connected: true
     });
     room.updatedAt = new Date().toISOString();
@@ -80,7 +82,7 @@ export class RoomStore {
   updateParticipant(
     code: string,
     participantId: string,
-    patch: Partial<Pick<Participant, "name" | "controller" | "team" | "role" | "profile" | "connected">>
+    patch: Partial<Pick<Participant, "name" | "controller" | "team" | "role" | "profile" | "ambition" | "connected">>
   ): GameRoom {
     const room = this.requireMutable(code);
     const participant = room.participants.find((item) => item.id === participantId);

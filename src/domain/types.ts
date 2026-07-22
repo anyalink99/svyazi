@@ -1,6 +1,7 @@
 export type Team = "red" | "blue";
 export type CardRole = Team | "neutral" | "assassin";
 export type OperativeProfile = "cautious" | "balanced" | "daring";
+export type ClueAmbition = "focused" | "balanced" | "broad";
 
 export interface CardState {
   word: string;
@@ -52,6 +53,7 @@ export interface TurnRecord {
   number: number;
   targetWords: string[];
   guesses: RevealedGuess[];
+  remaining: number;
   endedBy: "limit" | "wrong-card" | "assassin" | "victory" | "stopped";
 }
 

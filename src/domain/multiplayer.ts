@@ -1,4 +1,4 @@
-import type { OperativeProfile, Team } from "./types.js";
+import type { ClueAmbition, OperativeProfile, Team } from "./types.js";
 
 export type ControllerKind = "human" | "ai";
 export type PlayerRole = "spymaster" | "operative" | "spectator";
@@ -10,6 +10,7 @@ export interface Participant {
   team: Team | null;
   role: PlayerRole;
   profile?: OperativeProfile;
+  ambition?: ClueAmbition;
   connected: boolean;
 }
 
@@ -25,11 +26,19 @@ export interface GameRoom {
 }
 
 export interface SeatAssignment {
+  id: string;
   controller: ControllerKind;
   name: string;
 }
 
 export type TeamSeats = Record<Team, {
   spymaster: SeatAssignment;
-  operative: SeatAssignment;
+  operatives: SeatAssignment[];
 }>;
+
+export interface TeamAiTuning {
+  ambition: ClueAmbition;
+  risk: OperativeProfile;
+}
+
+export type AiTuning = Record<Team, TeamAiTuning>;

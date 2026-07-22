@@ -1,11 +1,18 @@
-import type { CardState, ClueAnalysis, RankedCard, Team } from "../../src/domain/types.js";
+import type { CardState, ClueAmbition, ClueAnalysis, RankedCard, Team } from "../../src/domain/types.js";
 import { createClueValidator, type LegalityResult } from "./legality.js";
 import type { SemanticSpace } from "../semantic/space.js";
 
 export interface SpymasterOptions {
+  ambition?: ClueAmbition;
   maxNumber?: number;
   neighborsPerTarget?: number;
 }
+
+const AMBITION_SETTINGS: Record<ClueAmbition, { maxNumber: number; breadthWeight: number }> = {
+  focused: { maxNumber: 2, breadthWeight: 1.55 },
+  balanced: { maxNumber: 4, breadthWeight: 2.15 },
+  broad: { maxNumber: 8, breadthWeight: 2.7 }
+};
 
 interface BoardSemanticContext {
   neighborsByWord: Map<string, Array<{ word: string; score: number }>>;
@@ -78,7 +85,8 @@ export function generateClue(
   const ownWords = unrevealed.filter((card) => card.role === team).map((card) => card.word);
   if (ownWords.length === 0) throw new Error("У команды не осталось слов.");
 
-  const maxNumber = Math.max(1, Math.min(options.maxNumber ?? 4, ownWords.length));
+  const ambition = AMBITION_SETTINGS[options.ambition ?? "balanced"];
+  const maxNumber = Math.max(1, Math.min(options.maxNumber ?? ambition.maxNumber, ownWords.length));
   const neighborLimit = options.neighborsPerTarget ?? 160;
   const boardWords = cards.map((card) => card.word);
   const context = getBoardContext(semantic, boardWords);
@@ -186,7 +194,7 @@ export function generateClue(
       const enemyPressure = Math.max(0, enemySimilarity - 0.28);
       const neutralPressure = Math.max(0, neutralSimilarity - 0.35);
       const score =
-        number * 2.15 +
+        number * ambition.breadthWeight +
         meanTarget * 1.35 +
         weakestTarget * 0.8 +
         margin * 5.2 -

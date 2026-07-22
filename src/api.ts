@@ -1,5 +1,6 @@
 import type {
   ClueAnalysis,
+  ClueAmbition,
   GameState,
   GuessPlan,
   OperativeProfile,
@@ -52,15 +53,15 @@ export const api = {
         ...(startingTeam === undefined ? {} : { startingTeam })
       })
     }),
-  clue: (state: GameState, maxNumber = 4) =>
+  clue: (state: GameState, ambition: ClueAmbition = "balanced", maxNumber?: number) =>
     request<ClueAnalysis>("/api/clues", {
       method: "POST",
-      body: JSON.stringify({ state, maxNumber })
+      body: JSON.stringify({ state, ambition, ...(maxNumber === undefined ? {} : { maxNumber }) })
     }),
-  analyzeClue: (state: GameState, clue: string, number: number) =>
+  analyzeClue: (state: GameState, clue: string, number: number, allowUnknown = false) =>
     request<ClueAnalysis>("/api/clues/analyze", {
       method: "POST",
-      body: JSON.stringify({ state, clue, number })
+      body: JSON.stringify({ state, clue, number, allowUnknown })
     }),
   guesses: (state: GameState, clue: string, number: number, profile: OperativeProfile) =>
     request<GuessPlan>("/api/guesses", {
@@ -70,7 +71,8 @@ export const api = {
   turn: (
     state: GameState,
     profile: OperativeProfile,
-    provided?: { clue: string; number: number }
+    provided?: { clue: string; number: number; allowUnknown?: boolean },
+    clueAmbition: ClueAmbition = "balanced"
   ) =>
     request<TurnResult>("/api/turns", {
       method: "POST",
@@ -78,7 +80,9 @@ export const api = {
         state,
         profile,
         clue: provided?.clue,
-        number: provided?.number
+        number: provided?.number,
+        allowUnknownClue: provided?.allowUnknown,
+        clueAmbition
       })
     }),
   resolveTurn: (
@@ -86,11 +90,12 @@ export const api = {
     clue: string,
     number: number,
     picks: number[],
-    stoppedEarly = false
+    stoppedEarly = false,
+    allowUnknown = false
   ) =>
     request<ResolveResult>("/api/turns/resolve", {
       method: "POST",
-      body: JSON.stringify({ state, clue, number, picks, stoppedEarly })
+      body: JSON.stringify({ state, clue, number, picks, stoppedEarly, allowUnknown })
     }),
   simulate: (games: number, redProfile: OperativeProfile, blueProfile: OperativeProfile) =>
     request<SimulationSummary>("/api/simulations", {
