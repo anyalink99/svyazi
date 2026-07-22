@@ -7,6 +7,17 @@ import { PlayersModal } from "./components/PlayersModal.js";
 import { TurnPanel, type GamePhase, type VoteStatus } from "./components/TurnPanel.js";
 import { remainingForTeam } from "./domain/game.js";
 import { refreshTrackedClueRemainders } from "./domain/clues.js";
+import {
+  claimLobbySeat,
+  EMPTY_LOBBY,
+  lobbyIsReady,
+  participantSeat,
+  reconcileLobby,
+  removeLobbyParticipant,
+  seatsWithLobbyNames,
+  upsertLobbyParticipant,
+  type LobbyState
+} from "./domain/lobby.js";
 import type { AiTuning, TeamSeats } from "./domain/multiplayer.js";
 import { allSeats, cloneSeats, DEFAULT_AI_TUNING, DEFAULT_SEATS, operativeNames, seatTeamAndRole } from "./domain/setup.js";
 import { loadSession, saveSession } from "./domain/session.js";
@@ -47,7 +58,6 @@ function commitRemainingDraft(state: GameState, team: Team, draft: Record<string
 
 export function App() {
   const [restoredSession] = useState(() => loadSession());
-  const skipInitialVotingReset = useRef(true);
   const [status, setStatus] = useState<ApiStatus | null>(null);
   const [game, setGame] = useState<GameState | null>(restoredSession?.game ?? null);
   const [turnBase, setTurnBase] = useState<GameState | null>(restoredSession?.turnBase ?? null);
@@ -72,21 +82,42 @@ export function App() {
   const [showTrace, setShowTrace] = useState(restoredSession?.showTrace ?? false);
   const [showKey, setShowKey] = useState(restoredSession?.showKey ?? false);
   const [autoPlay, setAutoPlay] = useState(restoredSession?.autoPlay ?? false);
+  const [lobby, setLobby] = useState<LobbyState>(EMPTY_LOBBY);
+  const lobbyRef = useRef(lobby);
+  const seatsRef = useRef(seats);
+  const gameRef = useRef(game);
+  const phaseRef = useRef(phase);
+  const votesRef = useRef(votes);
+  const pickedIndicesRef = useRef(pickedIndices);
+  const loadingRef = useRef(loading);
+  const preferredNetworkSeatRef = useRef<string | null>(restoredSession?.localSeatId ?? DEFAULT_LOCAL_SEAT_ID);
+  const reconnectClaimAttemptedRef = useRef(false);
+  lobbyRef.current = lobby;
+  seatsRef.current = seats;
+  gameRef.current = game;
+  phaseRef.current = phase;
+  votesRef.current = votes;
+  pickedIndicesRef.current = pickedIndices;
+  loadingRef.current = loading;
   const network = useP2PRoom({
     getSnapshot: buildSharedSession,
     onSnapshot: applySharedSession,
-    onCommand: handleNetworkCommand
+    onCommand: handleNetworkCommand,
+    onPeerIdentity: handlePeerIdentity,
+    onPeerLeave: handlePeerLeave,
+    onNotice: setError
   });
 
+  const displaySeats = useMemo(() => network.role === "offline" ? seats : seatsWithLobbyNames(seats, lobby), [lobby, network.role, seats]);
   const activeTeam = phase === "result" && lastRecord ? lastRecord.team : (game?.turn ?? "red");
-  const localSeat = useMemo(() => seatTeamAndRole(seats, localSeatId), [localSeatId, seats]);
+  const localSeat = useMemo(() => seatTeamAndRole(displaySeats, localSeatId), [displaySeats, localSeatId]);
   const persistentSpymasterView = localSeat?.role === "spymaster";
   const localOperativeCanAct = Boolean(
     localSeat?.role === "operative" &&
     localSeat.team === activeTeam &&
     localSeat.seat.controller === "human"
   );
-  const activeOperatives = seats[activeTeam].operatives;
+  const activeOperatives = displaySeats[activeTeam].operatives;
   const humanOperatives = activeOperatives.filter((seat) => seat.controller === "human");
   const allActiveOperativesAi = activeOperatives.every((seat) => seat.controller === "ai");
   const allowUnknownClue = activeOperatives.every((seat) => seat.controller === "human");
@@ -98,12 +129,35 @@ export function App() {
     total: activeVoterIds.length,
     message: voteMessage
   };
+  const canControlSystem = network.role !== "guest";
+  const canManageLobby = network.role !== "guest";
+  const lobbyReady = network.role === "offline" || lobbyIsReady(lobby, seats);
+  const canAdvanceSystem = canControlSystem && lobbyReady;
+  const canSubmitHumanClue = Boolean(
+    lobbyReady && network.hostAvailable && localSeat?.role === "spymaster" && localSeat.team === activeTeam &&
+    localSeat.seat.controller === "human" && phase === "clue"
+  );
+  const canFinishHumanGuess = Boolean(
+    lobbyReady && network.hostAvailable && localSeat?.role === "operative" && localSeat.team === activeTeam &&
+    localSeat.seat.controller === "human" && phase === "guess"
+  );
 
   const resetVoting = useCallback(() => {
+    votesRef.current = {};
     setVotes({});
     setVoteCursor(0);
     setVoteMessage(null);
   }, []);
+
+  function setAuthoritativeLobby(nextLobby: LobbyState) {
+    lobbyRef.current = nextLobby;
+    setLobby(nextLobby);
+  }
+
+  function updateLoading(nextLoading: boolean) {
+    loadingRef.current = nextLoading;
+    setLoading(nextLoading);
+  }
 
   function buildSharedSession(): SharedSession | null {
     if (!game) return null;
@@ -120,9 +174,8 @@ export function App() {
       votes,
       voteCursor,
       voteMessage,
-      manualNumber,
-      remainingDraft,
-      loading
+      loading,
+      lobby
     };
   }
 
@@ -136,32 +189,91 @@ export function App() {
     setLastPlan(snapshot.lastPlan);
     setLastRecord(snapshot.lastRecord);
     setPickedIndices(snapshot.pickedIndices);
+    pickedIndicesRef.current = snapshot.pickedIndices;
     setVotes(snapshot.votes);
+    votesRef.current = snapshot.votes;
     setVoteCursor(snapshot.voteCursor);
     setVoteMessage(snapshot.voteMessage);
-    setManualNumber(snapshot.manualNumber);
-    setRemainingDraft(snapshot.remainingDraft);
-    setLoading(snapshot.loading);
+    updateLoading(snapshot.loading);
+    const nextLobby = snapshot.lobby ?? EMPTY_LOBBY;
+    setAuthoritativeLobby(nextLobby);
+    const self = nextLobby.participants.find((participant) => participant.id === network.selfId);
+    if (
+      network.role === "guest" && self && !self.seatId && preferredNetworkSeatRef.current &&
+      !reconnectClaimAttemptedRef.current &&
+      allSeats(snapshot.seats).some((seat) => seat.id === preferredNetworkSeatRef.current && seat.controller === "human")
+    ) {
+      reconnectClaimAttemptedRef.current = true;
+      void network.sendCommand({ type: "claim-seat", seatId: preferredNetworkSeatRef.current, resume: true });
+    }
     setError(null);
   }
 
-  function handleNetworkCommand(command: MultiplayerCommand) {
-    switch (command.type) {
-      case "request-clue": void requestAiClue(); break;
-      case "submit-clue": void submitHumanClue(command); break;
-      case "start-ai-guess": void startAiGuess(); break;
-      case "finish-guess": void finishHumanGuess(); break;
-      case "choose-card": void chooseCard(command.index, command.seatId); break;
-      case "continue": continueToNextTurn(); break;
-      case "new-game": void startNewGame(); break;
-      case "tuning": setTuning((current) => ({ ...current, [command.team]: { ...current[command.team], ...command.patch } })); break;
-      case "remaining": applyRemainingDraft(command.record, command.remaining); break;
-      case "seats": setSeats(command.seats); break;
-      case "all-tuning": setTuning(command.tuning); break;
-    }
+  function handlePeerIdentity(peer: { id: string; name: string }) {
+    const current = lobbyRef.current;
+    const existing = current.participants.find((participant) => participant.id === peer.id);
+    setAuthoritativeLobby(upsertLobbyParticipant(current, {
+      id: peer.id,
+      name: peer.name,
+      isHost: false,
+      seatId: existing?.seatId ?? null
+    }));
   }
 
-  function dispatchOrRun(command: MultiplayerCommand, action: () => void) {
+  function handlePeerLeave(peerId: string) {
+    setAuthoritativeLobby(removeLobbyParticipant(lobbyRef.current, peerId));
+    resetVoting();
+  }
+
+  function rejectCommand(peerId: string, message: string) {
+    void network.sendNotice(peerId, message);
+  }
+
+  function handleNetworkCommand(command: MultiplayerCommand, peerId: string) {
+    if (command.type === "claim-seat") {
+      const result = claimLobbySeat(lobbyRef.current, seatsRef.current, peerId, command.seatId);
+      if (!result.accepted) {
+        rejectCommand(peerId, result.reason ?? "Не удалось занять место.");
+        return;
+      }
+      setAuthoritativeLobby(result.lobby);
+      if (!command.resume) resetVoting();
+      return;
+    }
+
+    const actor = participantSeat(lobbyRef.current, seatsRef.current, peerId);
+    const currentGame = gameRef.current;
+    const currentPhase = phaseRef.current;
+    if (!actor || actor.seat.controller !== "human" || !currentGame) {
+      rejectCommand(peerId, "Сначала займите подходящее место в комнате.");
+      return;
+    }
+
+    if (command.type === "submit-clue") {
+      if (currentPhase !== "clue" || actor.role !== "spymaster" || actor.team !== currentGame.turn) {
+        rejectCommand(peerId, "Сейчас подсказку даёт другой ведущий.");
+        return;
+      }
+      void submitHumanClue(command);
+      return;
+    }
+
+    if (currentPhase !== "guess" || actor.role !== "operative" || actor.team !== currentGame.turn) {
+      rejectCommand(peerId, "Сейчас отвечает другая команда.");
+      return;
+    }
+    if (command.type === "choose-card") {
+      if (command.seatId !== actor.seat.id) {
+        rejectCommand(peerId, "Нельзя голосовать от имени другого игрока.");
+        return;
+      }
+      void chooseCard(command.index, actor.seat.id);
+      return;
+    }
+    if (command.type === "finish-guess") void finishHumanGuess();
+  }
+
+  function dispatchHumanAction(command: MultiplayerCommand, action: () => void) {
     if (network.role === "guest") {
       void network.sendCommand(command);
       return;
@@ -176,7 +288,9 @@ export function App() {
     setClue(null);
     setLastPlan(null);
     setLastRecord(null);
+    pickedIndicesRef.current = [];
     setPickedIndices([]);
+    votesRef.current = {};
     setVotes({});
     setVoteCursor(0);
     setVoteMessage(null);
@@ -185,7 +299,8 @@ export function App() {
   }, []);
 
   const startNewGame = useCallback(async () => {
-    setLoading(true);
+    if (loadingRef.current) return;
+    updateLoading(true);
     setError(null);
     setAutoPlay(false);
     try {
@@ -195,7 +310,7 @@ export function App() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Не удалось создать поле.");
     } finally {
-      setLoading(false);
+      updateLoading(false);
     }
   }, [resetFlow]);
 
@@ -244,31 +359,51 @@ export function App() {
 
   useEffect(() => {
     if (!localSeatId) return;
+    if (network.role !== "offline") return;
     const stillHuman = allSeats(seats).some((seat) => seat.id === localSeatId && seat.controller === "human");
     if (!stillHuman) setLocalSeatId(null);
-  }, [localSeatId, seats]);
+  }, [localSeatId, network.role, seats]);
 
   useEffect(() => {
-    void network.setSeat(localSeatId);
-  }, [localSeatId, network.role, network.setSeat]);
+    if (network.role === "offline") {
+      if (lobbyRef.current.participants.length) setAuthoritativeLobby(EMPTY_LOBBY);
+      return;
+    }
+    if (network.role !== "host") return;
+    const current = lobbyRef.current;
+    const existing = current.participants.find((participant) => participant.id === network.selfId);
+    let next = upsertLobbyParticipant(current, {
+      id: network.selfId,
+      name: network.localName,
+      isHost: true,
+      seatId: existing?.seatId ?? null
+    });
+    if (!existing && localSeatId) {
+      const claim = claimLobbySeat(next, seatsRef.current, network.selfId, localSeatId);
+      if (claim.accepted) next = claim.lobby;
+    }
+    setAuthoritativeLobby(next);
+  }, [network.localName, network.role, network.selfId]);
+
+  useEffect(() => {
+    if (network.role === "offline") return;
+    const authoritativeSeatId = lobby.participants.find((participant) => participant.id === network.selfId)?.seatId ?? null;
+    setLocalSeatId(authoritativeSeatId);
+  }, [lobby, network.role, network.selfId]);
+
+  useEffect(() => {
+    if (network.role === "guest" && !network.hostAvailable) reconnectClaimAttemptedRef.current = false;
+  }, [network.hostAvailable, network.role]);
 
   useEffect(() => {
     if (network.role !== "host") return;
     const snapshot = buildSharedSession();
     if (snapshot) void network.broadcastSnapshot(snapshot);
   }, [
-    clue, game, lastPlan, lastRecord, loading, manualNumber, network.broadcastSnapshot,
-    network.role, phase, pickedIndices, remainingDraft, seats, tuning, turnBase,
+    clue, game, lastPlan, lastRecord, loading, lobby, network.broadcastSnapshot,
+    network.role, phase, pickedIndices, seats, tuning, turnBase,
     voteCursor, voteMessage, votes
   ]);
-
-  useEffect(() => {
-    if (skipInitialVotingReset.current) {
-      skipInitialVotingReset.current = false;
-      return;
-    }
-    resetVoting();
-  }, [game?.turnNumber, phase, resetVoting, seats]);
 
   useEffect(() => {
     if (!game || phase !== "clue" || network.role === "guest") return;
@@ -277,8 +412,8 @@ export function App() {
   }, [game?.turnNumber, network.role, phase, seats]);
 
   const requestAiClue = useCallback(async () => {
-    if (!game || game.winner || phase !== "clue" || loading) return;
-    setLoading(true);
+    if (!game || game.winner || phase !== "clue" || loadingRef.current) return;
+    updateLoading(true);
     setError(null);
     try {
       const clueBase = refreshTrackedClueRemainders(game, game.turn);
@@ -286,6 +421,7 @@ export function App() {
       setGame(clueBase);
       setTurnBase(clueBase);
       setClue(generated);
+      pickedIndicesRef.current = [];
       setPickedIndices([]);
       setRemainingDraft({});
       resetVoting();
@@ -294,7 +430,7 @@ export function App() {
       setError(caught instanceof Error ? caught.message : "Ведущий не смог дать подсказку.");
       setAutoPlay(false);
     } finally {
-      setLoading(false);
+      updateLoading(false);
     }
   }, [game, loading, phase, remainingDraft, resetVoting, tuning]);
 
@@ -303,7 +439,8 @@ export function App() {
     const clueNumber = input?.number ?? manualNumber;
     const clueDraft = input?.remainingDraft ?? remainingDraft;
     if (!game || phase !== "clue" || !clueWord.trim()) return;
-    setLoading(true);
+    if (loadingRef.current) return;
+    updateLoading(true);
     setError(null);
     try {
       const teamAllowsUnknown = seats[game.turn].operatives.every((seat) => seat.controller === "human");
@@ -312,6 +449,7 @@ export function App() {
       setGame(clueBase);
       setTurnBase(clueBase);
       setClue(analyzed);
+      pickedIndicesRef.current = [];
       setPickedIndices([]);
       setRemainingDraft({});
       resetVoting();
@@ -320,7 +458,7 @@ export function App() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Эту подсказку нельзя использовать.");
     } finally {
-      setLoading(false);
+      updateLoading(false);
     }
   }
 
@@ -340,8 +478,8 @@ export function App() {
   }, [resetVoting]);
 
   const startAiGuess = useCallback(async () => {
-    if (!turnBase || !clue || phase !== "guess" || loading) return;
-    setLoading(true);
+    if (!turnBase || !clue || phase !== "guess" || loadingRef.current) return;
+    updateLoading(true);
     setError(null);
     try {
       const risk = tuning[turnBase.turn].risk;
@@ -359,13 +497,13 @@ export function App() {
       setError(caught instanceof Error ? caught.message : "Оперативник не смог завершить ход.");
       setAutoPlay(false);
     } finally {
-      setLoading(false);
+      updateLoading(false);
     }
   }, [acceptResolvedTurn, clue, loading, phase, tuning, turnBase]);
 
-  const finishHumanGuess = useCallback(async (indices = pickedIndices, stoppedEarly = true) => {
-    if (!turnBase || !clue || phase !== "guess" || loading) return;
-    setLoading(true);
+  const finishHumanGuess = useCallback(async (indices = pickedIndicesRef.current, stoppedEarly = true) => {
+    if (!turnBase || !clue || phase !== "guess" || loadingRef.current) return;
+    updateLoading(true);
     setError(null);
     try {
       const teamAllowsUnknown = seats[turnBase.turn].operatives.every((seat) => seat.controller === "human");
@@ -374,17 +512,18 @@ export function App() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Не удалось применить ответы.");
     } finally {
-      setLoading(false);
+      updateLoading(false);
     }
   }, [acceptResolvedTurn, clue, loading, phase, pickedIndices, seats, turnBase]);
 
   function revealHumanChoice(index: number) {
     if (!game || !turnBase || !clue || game.cards[index]?.revealed) return;
     const team = turnBase.turn;
-    const nextPicks = [...pickedIndices, index];
+    const nextPicks = [...pickedIndicesRef.current, index];
     const nextGame = previewReveal(game, index);
     const card = nextGame.cards[index];
     setGame(nextGame);
+    pickedIndicesRef.current = nextPicks;
     setPickedIndices(nextPicks);
     resetVoting();
 
@@ -394,7 +533,7 @@ export function App() {
   }
 
   async function chooseCard(index: number, voterSeatId: string | null = null) {
-    if (!game || !turnBase || !clue || phase !== "guess" || loading || game.cards[index]?.revealed) return;
+    if (!game || !turnBase || !clue || phase !== "guess" || loadingRef.current || game.cards[index]?.revealed) return;
     const team = turnBase.turn;
     const operatives = seats[team].operatives;
     const humans = operatives.filter((seat) => seat.controller === "human");
@@ -408,7 +547,8 @@ export function App() {
     const voter = humans.find((seat) => seat.id === voterSeatId) ?? humans[voteCursor] ?? humans[0];
     if (!voter) return;
     setVoteMessage(null);
-    let round = castCardVote(votes, operatives.map((seat) => seat.id), voter.id, index);
+    let round = castCardVote(votesRef.current, operatives.map((seat) => seat.id), voter.id, index);
+    votesRef.current = round.votes;
     setVotes(round.votes);
 
     const humansComplete = humans.every((seat) => Number.isInteger(round.votes[seat.id]));
@@ -420,11 +560,12 @@ export function App() {
     let handedOffToResolution = false;
     try {
       if (aiOperatives.length) {
-        setLoading(true);
+        updateLoading(true);
         const plan = await api.guesses(game, clue.word, clue.number, tuning[team].risk);
         setLastPlan(plan);
         const aiChoice = plan.picks[0]?.index;
         if (aiChoice === undefined) {
+          votesRef.current = {};
           setVotes({});
           setVoteCursor(0);
           setVoteMessage("ИИ предлагает остановиться. Карточка не открыта.");
@@ -433,13 +574,15 @@ export function App() {
         for (const operative of aiOperatives) {
           round = castCardVote(round.votes, operatives.map((seat) => seat.id), operative.id, aiChoice);
         }
+        votesRef.current = round.votes;
       }
 
       if (round.complete && round.consensusIndex !== null) {
         handedOffToResolution = true;
-        setLoading(false);
+        updateLoading(false);
         revealHumanChoice(round.consensusIndex);
       } else {
+        votesRef.current = {};
         setVotes({});
         setVoteCursor(0);
         setVoteMessage("Голоса не совпали. Обсудите выбор и попробуйте ещё раз.");
@@ -447,7 +590,7 @@ export function App() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Не удалось собрать голоса команды.");
     } finally {
-      if (!handedOffToResolution) setLoading(false);
+      if (!handedOffToResolution) updateLoading(false);
     }
   }
 
@@ -455,6 +598,7 @@ export function App() {
     setPhase("clue");
     setTurnBase(null);
     setClue(null);
+    pickedIndicesRef.current = [];
     setPickedIndices([]);
     setLastRecord(null);
     setRemainingDraft({});
@@ -462,7 +606,7 @@ export function App() {
   }, [resetVoting]);
 
   useEffect(() => {
-    if (!autoPlay || network.role === "guest" || !game || loading || game.winner) return;
+    if (!autoPlay || network.role === "guest" || !lobbyReady || !game || loading || game.winner) return;
     const visibleTeam = phase === "result" && lastRecord ? lastRecord.team : game.turn;
     let action: (() => void) | null = null;
     if (phase === "clue" && seats[visibleTeam].spymaster.controller === "ai") action = () => void requestAiClue();
@@ -471,7 +615,7 @@ export function App() {
     if (!action) return;
     const timer = window.setTimeout(action, phase === "result" ? 1100 : 720);
     return () => window.clearTimeout(timer);
-  }, [autoPlay, continueToNextTurn, game, lastRecord, loading, network.role, phase, requestAiClue, seats, startAiGuess]);
+  }, [autoPlay, continueToNextTurn, game, lastRecord, loading, lobbyReady, network.role, phase, requestAiClue, seats, startAiGuess]);
 
   const counts = game ? { red: remainingForTeam(game, "red"), blue: remainingForTeam(game, "blue") } : { red: 0, blue: 0 };
   const seatCounts = useMemo(() => {
@@ -480,10 +624,8 @@ export function App() {
   }, [seats]);
 
   function changeActiveTuning(patch: Partial<AiTuning[Team]>) {
-    dispatchOrRun(
-      { type: "tuning", team: activeTeam, patch },
-      () => setTuning((current) => ({ ...current, [activeTeam]: { ...current[activeTeam], ...patch } }))
-    );
+    if (!canControlSystem) return;
+    setTuning((current) => ({ ...current, [activeTeam]: { ...current[activeTeam], ...patch } }));
   }
 
   function applyRemainingDraft(record: TurnRecord, remaining: number) {
@@ -494,10 +636,37 @@ export function App() {
   }
 
   function changeRemainingDraft(record: TurnRecord, remaining: number) {
-    dispatchOrRun(
-      { type: "remaining", record, remaining },
-      () => applyRemainingDraft(record, remaining)
-    );
+    if (!canSubmitHumanClue) return;
+    applyRemainingDraft(record, remaining);
+  }
+
+  function changeSeats(nextSeats: TeamSeats) {
+    if (!canManageLobby) return;
+    const cloned = cloneSeats(nextSeats);
+    seatsRef.current = cloned;
+    setSeats(cloned);
+    if (network.role !== "offline") setAuthoritativeLobby(reconcileLobby(lobbyRef.current, cloned));
+    resetVoting();
+  }
+
+  function changeLocalSeat(nextSeatId: string | null) {
+    preferredNetworkSeatRef.current = nextSeatId;
+    if (network.role === "offline") {
+      setLocalSeatId(nextSeatId);
+      return;
+    }
+    if (network.role === "guest") {
+      reconnectClaimAttemptedRef.current = true;
+      void network.sendCommand({ type: "claim-seat", seatId: nextSeatId });
+      return;
+    }
+    const result = claimLobbySeat(lobbyRef.current, seatsRef.current, network.selfId, nextSeatId);
+    if (result.accepted) {
+      setAuthoritativeLobby(result.lobby);
+      resetVoting();
+    } else {
+      setError(result.reason);
+    }
   }
 
   return (
@@ -523,7 +692,7 @@ export function App() {
           <div className="turn-baton__message" key={`${activeTeam}-${phase}`}>
             <span>{phase === "clue" ? "Ведущий даёт подсказку" : phase === "guess" ? "Команда согласует карточки" : game?.winner ? `Победа ${teamName(game.winner)}` : "Команда завершила ход"}</span>
           </div>
-          <div className="turn-baton__role">{phase === "clue" ? seats[activeTeam].spymaster.name : phase === "guess" ? operativeNames(seats, activeTeam) : "Переход хода"}</div>
+          <div className="turn-baton__role">{phase === "clue" ? displaySeats[activeTeam].spymaster.name : phase === "guess" ? operativeNames(displaySeats, activeTeam) : "Переход хода"}</div>
         </section>
 
         <section className="board-area">
@@ -533,10 +702,10 @@ export function App() {
               clue={clue}
               showKey={showKey || persistentSpymasterView}
               showTrace={showTrace}
-              interactive={Boolean(phase === "guess" && localOperativeCanAct && !loading && !persistentSpymasterView)}
+              interactive={Boolean(phase === "guess" && localOperativeCanAct && network.hostAvailable && !loading && !persistentSpymasterView)}
               currentTeam={activeTeam}
-              onCardClick={(index) => dispatchOrRun(
-                { type: "choose-card", index, seatId: localSeatId },
+              onCardClick={(index) => dispatchHumanAction(
+                { type: "choose-card", index, seatId: localSeatId ?? "" },
                 () => void chooseCard(index, localSeatId)
               )}
             />
@@ -549,7 +718,7 @@ export function App() {
               phase={phase}
               team={activeTeam}
               nextTeam={game.turn}
-              seats={seats}
+              seats={displaySeats}
               tuning={tuning[activeTeam]}
               clue={clue}
               result={lastRecord}
@@ -562,19 +731,25 @@ export function App() {
               previousClues={game.history}
               remainingDraft={remainingDraft}
               voteStatus={voteStatus}
+              canControlSystem={canAdvanceSystem}
+              canSubmitHumanClue={canSubmitHumanClue}
+              canFinishHumanGuess={canFinishHumanGuess}
+              canEditTuning={canControlSystem}
+              hostAvailable={network.hostAvailable}
+              lobbyReady={lobbyReady}
               onManualClueChange={setManualClue}
               onManualNumberChange={setManualNumber}
               onTuningChange={changeActiveTuning}
               onRemainingDraftChange={changeRemainingDraft}
-              onSubmitClue={() => dispatchOrRun(
+              onSubmitClue={() => dispatchHumanAction(
                 { type: "submit-clue", clue: manualClue, number: manualNumber, remainingDraft },
                 () => void submitHumanClue()
               )}
-              onRequestClue={() => dispatchOrRun({ type: "request-clue" }, () => void requestAiClue())}
-              onStartAiGuess={() => dispatchOrRun({ type: "start-ai-guess" }, () => void startAiGuess())}
-              onFinishHumanGuess={() => dispatchOrRun({ type: "finish-guess" }, () => void finishHumanGuess())}
-              onContinue={() => dispatchOrRun({ type: "continue" }, continueToNextTurn)}
-              onNewGame={() => dispatchOrRun({ type: "new-game" }, () => void startNewGame())}
+              onRequestClue={() => { if (canAdvanceSystem) void requestAiClue(); }}
+              onStartAiGuess={() => { if (canAdvanceSystem) void startAiGuess(); }}
+              onFinishHumanGuess={() => dispatchHumanAction({ type: "finish-guess" }, () => void finishHumanGuess())}
+              onContinue={() => { if (canAdvanceSystem) continueToNextTurn(); }}
+              onNewGame={() => { if (canAdvanceSystem) void startNewGame(); }}
             />
           ) : null}
           {game ? <History history={game.history} /> : null}
@@ -593,24 +768,35 @@ export function App() {
 
       <PlayersModal
         open={playersOpen}
-        seats={seats}
+        seats={displaySeats}
         tuning={tuning}
         localSeatId={localSeatId}
+        canManageLobby={canManageLobby}
         networkRole={network.role}
         networkRoomCode={network.roomCode}
         networkStatus={network.status}
         networkPeers={network.peers}
-        onSeatsChange={(nextSeats) => dispatchOrRun({ type: "seats", seats: nextSeats }, () => setSeats(nextSeats))}
-        onTuningChange={(nextTuning) => dispatchOrRun({ type: "all-tuning", tuning: nextTuning }, () => setTuning(nextTuning))}
-        onLocalSeatChange={setLocalSeatId}
+        networkParticipants={lobby.participants}
+        onSeatsChange={changeSeats}
+        onTuningChange={(nextTuning) => { if (canManageLobby) setTuning(nextTuning); }}
+        onLocalSeatChange={changeLocalSeat}
         onClose={() => setPlayersOpen(false)}
-        onNewGame={() => dispatchOrRun({ type: "new-game" }, () => void startNewGame())}
+        onNewGame={() => { if (canControlSystem) void startNewGame(); }}
         onCreateRoom={network.create}
         onJoinRoom={async (code, name) => {
+          setAuthoritativeLobby(EMPTY_LOBBY);
+          preferredNetworkSeatRef.current = null;
+          reconnectClaimAttemptedRef.current = true;
           await network.join(code, name);
           setLocalSeatId(null);
         }}
-        onLeaveRoom={network.leave}
+        onLeaveRoom={async () => {
+          await network.leave();
+          setAuthoritativeLobby(EMPTY_LOBBY);
+          preferredNetworkSeatRef.current = null;
+          reconnectClaimAttemptedRef.current = false;
+          setLocalSeatId(null);
+        }}
       />
       <DeveloperModal
         open={developerOpen}
@@ -625,7 +811,7 @@ export function App() {
         onShowKeyChange={setShowKey}
         autoPlay={autoPlay}
         onAutoPlayChange={setAutoPlay}
-        onNewGame={() => dispatchOrRun({ type: "new-game" }, () => void startNewGame())}
+        onNewGame={() => { if (canControlSystem) void startNewGame(); }}
         onClose={() => setDeveloperOpen(false)}
       />
 

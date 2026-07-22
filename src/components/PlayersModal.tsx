@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { lobbyIsReady, type LobbyParticipant } from "../domain/lobby.js";
 import type { AiTuning, ControllerKind, SeatAssignment, TeamSeats } from "../domain/multiplayer.js";
 import { allSeats, cloneSeats } from "../domain/setup.js";
 import type { ClueAmbition, OperativeProfile, Team } from "../domain/types.js";
@@ -11,10 +12,12 @@ interface PlayersModalProps {
   seats: TeamSeats;
   tuning: AiTuning;
   localSeatId: string | null;
+  canManageLobby: boolean;
   networkRole: NetworkRole;
   networkRoomCode: string;
   networkStatus: string;
   networkPeers: PeerInfo[];
+  networkParticipants: LobbyParticipant[];
   onSeatsChange: (seats: TeamSeats) => void;
   onTuningChange: (tuning: AiTuning) => void;
   onLocalSeatChange: (seatId: string | null) => void;
@@ -50,7 +53,8 @@ function SeatEditor({
   onChange,
   onMakeLocal,
   onRemove,
-  occupiedBy = null
+  occupiedBy = null,
+  editable
 }: {
   label: string;
   value: SeatAssignment;
@@ -60,6 +64,7 @@ function SeatEditor({
   onMakeLocal: () => void;
   onRemove?: () => void;
   occupiedBy?: string | null;
+  editable: boolean;
 }) {
   return (
     <div className={`seat-editor${local ? " is-local" : ""}${occupiedBy ? " is-occupied" : ""}`}>
@@ -68,7 +73,14 @@ function SeatEditor({
         value={value.controller}
         options={CONTROLLER_OPTIONS}
         ariaLabel={`Тип игрока: ${label}`}
-        onChange={(controller) => onChange({ ...value, controller })}
+        disabled={!editable}
+        onChange={(controller) => onChange({
+          ...value,
+          controller,
+          name: controller === "ai"
+            ? (label === "Ведущий" ? "ИИ-ведущий" : "ИИ-оперативник")
+            : (value.controller === "ai" ? "Игрок" : value.name)
+        })}
       />
       {value.controller === "human" ? (
         <button
@@ -77,9 +89,9 @@ function SeatEditor({
           aria-pressed={local}
           disabled={Boolean(occupiedBy) && !local}
           onClick={onMakeLocal}
-        >{local ? `✓ ${value.name}` : occupiedBy ?? "Занять"}</button>
-      ) : <input className="seat-name-input" value={value.name} onChange={(event) => onChange({ ...value, name: event.target.value })} aria-label={`Имя: ${label}`} />}
-      {removable ? <button className="remove-seat-button" type="button" onClick={onRemove} aria-label={`Удалить: ${label}`}>×</button> : null}
+        >{local ? `✓ ${occupiedBy ?? value.name}` : occupiedBy ?? "Занять"}</button>
+      ) : <input disabled={!editable} className="seat-name-input" value={value.name} onChange={(event) => onChange({ ...value, name: event.target.value })} aria-label={`Имя: ${label}`} />}
+      {removable && editable ? <button className="remove-seat-button" type="button" onClick={onRemove} aria-label={`Удалить: ${label}`}>×</button> : null}
     </div>
   );
 }
@@ -95,6 +107,7 @@ export function PlayersModal(props: PlayersModalProps) {
   const [removingSeatIds, setRemovingSeatIds] = useState<Set<string>>(() => new Set());
   const [roomOpen, setRoomOpen] = useState(false);
   const presence = useModalPresence(props.open, props.onClose);
+  const draftLobbyReady = props.networkRole === "offline" || lobbyIsReady({ participants: props.networkParticipants }, draftSeats);
 
   useEffect(() => {
     if (!props.open) return;
@@ -109,8 +122,12 @@ export function PlayersModal(props: PlayersModalProps) {
     if (!props.open || props.networkRole !== "guest") return;
     setDraftSeats(cloneSeats(props.seats));
     setDraftTuning(structuredClone(props.tuning));
-    setDraftLocalSeatId(props.localSeatId);
   }, [props.localSeatId, props.networkRole, props.seats, props.tuning]);
+
+  useEffect(() => {
+    if (!props.open || props.networkRole === "offline") return;
+    setDraftLocalSeatId(props.localSeatId);
+  }, [props.localSeatId, props.networkRole, props.open]);
 
   if (!presence.mounted) return null;
 
@@ -140,16 +157,27 @@ export function PlayersModal(props: PlayersModalProps) {
   }
 
   function claimSeat(team: Team, role: "spymaster" | "operative", index = 0) {
-    const nickname = networkName.trim() || "Игрок";
-    if (role === "spymaster") {
-      const seat = draftSeats[team].spymaster;
-      updateSpymaster(team, { ...seat, name: nickname });
-      setDraftLocalSeatId(seat.id);
+    const seat = role === "spymaster" ? draftSeats[team].spymaster : draftSeats[team].operatives[index];
+    if (draftLocalSeatId === seat.id) {
+      if (props.networkRole === "offline") setDraftLocalSeatId(null);
+      props.onLocalSeatChange(null);
       return;
     }
-    const seat = draftSeats[team].operatives[index];
+    if (props.networkRole !== "offline") {
+      if (props.networkRole === "host") commitDraft();
+      props.onLocalSeatChange(seat.id);
+      return;
+    }
+    const nickname = networkName.trim() || "Игрок";
+    if (role === "spymaster") {
+      updateSpymaster(team, { ...seat, name: nickname });
+      setDraftLocalSeatId(seat.id);
+      props.onLocalSeatChange(seat.id);
+      return;
+    }
     updateOperative(team, index, { ...seat, name: nickname });
     setDraftLocalSeatId(seat.id);
+    props.onLocalSeatChange(seat.id);
   }
 
   function changeNetworkName(name: string) {
@@ -191,17 +219,19 @@ export function PlayersModal(props: PlayersModalProps) {
   }
 
   function commitDraft() {
+    if (!props.canManageLobby) return;
     props.onSeatsChange(cloneSeats(draftSeats));
     props.onTuningChange(structuredClone(draftTuning));
     props.onLocalSeatChange(draftLocalSeatId);
   }
 
   function saveAndClose() {
-    commitDraft();
+    if (props.canManageLobby) commitDraft();
     props.onClose();
   }
 
   function saveAndStart() {
+    if (!props.canManageLobby || !draftLobbyReady) return;
     commitDraft();
     props.onNewGame();
   }
@@ -210,6 +240,7 @@ export function PlayersModal(props: PlayersModalProps) {
     setNetworkBusy(true);
     setNetworkError(null);
     try {
+      commitDraft();
       await props.onCreateRoom(networkName);
     } catch (caught) {
       setNetworkError(caught instanceof Error ? caught.message : "Не удалось создать комнату.");
@@ -256,7 +287,8 @@ export function PlayersModal(props: PlayersModalProps) {
                 label="Ведущий"
                 value={draftSeats[team].spymaster}
                 local={draftLocalSeatId === draftSeats[team].spymaster.id}
-                occupiedBy={props.networkPeers.find((peer) => peer.seatId === draftSeats[team].spymaster.id)?.name}
+                occupiedBy={props.networkParticipants.find((participant) => participant.seatId === draftSeats[team].spymaster.id)?.name}
+                editable={props.canManageLobby}
                 onChange={(value) => updateSpymaster(team, value)}
                 onMakeLocal={() => claimSeat(team, "spymaster")}
               />
@@ -268,7 +300,8 @@ export function PlayersModal(props: PlayersModalProps) {
                         label={`Оперативник ${index + 1}`}
                         value={operative}
                         local={draftLocalSeatId === operative.id}
-                        occupiedBy={props.networkPeers.find((peer) => peer.seatId === operative.id)?.name}
+                        occupiedBy={props.networkParticipants.find((participant) => participant.seatId === operative.id)?.name}
+                        editable={props.canManageLobby}
                         removable={draftSeats[team].operatives.length > 1}
                         onChange={(value) => updateOperative(team, index, value)}
                         onMakeLocal={() => claimSeat(team, "operative", index)}
@@ -277,11 +310,11 @@ export function PlayersModal(props: PlayersModalProps) {
                     </div>
                   </div>
                 ))}
-                <button className="add-operative-button" type="button" onClick={() => addOperative(team)}>+ Добавить оперативника</button>
+                {props.canManageLobby ? <button className="add-operative-button" type="button" onClick={() => addOperative(team)}>+ Добавить оперативника</button> : null}
               </div>
               <div className="team-ai-settings">
-                <div><span>Охват ведущего ИИ</span><ChoiceSelect value={draftTuning[team].ambition} options={AMBITION_OPTIONS} ariaLabel={`Охват ведущего ИИ, ${team}`} onChange={(ambition) => updateTuning(team, { ambition })} /></div>
-                <div><span>Риск оперативников ИИ</span><ChoiceSelect value={draftTuning[team].risk} options={RISK_OPTIONS} ariaLabel={`Риск оперативников ИИ, ${team}`} onChange={(risk) => updateTuning(team, { risk })} /></div>
+                <div><span>Охват ведущего ИИ</span><ChoiceSelect disabled={!props.canManageLobby} value={draftTuning[team].ambition} options={AMBITION_OPTIONS} ariaLabel={`Охват ведущего ИИ, ${team}`} onChange={(ambition) => updateTuning(team, { ambition })} /></div>
+                <div><span>Риск оперативников ИИ</span><ChoiceSelect disabled={!props.canManageLobby} value={draftTuning[team].risk} options={RISK_OPTIONS} ariaLabel={`Риск оперативников ИИ, ${team}`} onChange={(risk) => updateTuning(team, { risk })} /></div>
               </div>
             </section>
           ))}
@@ -305,7 +338,7 @@ export function PlayersModal(props: PlayersModalProps) {
                 <div className="room-connected">
                   <div><span>{props.networkRole === "host" ? "Вы создали комнату" : "Вы подключены"}</span><code>{props.networkRoomCode}</code></div>
                   <strong>{props.networkStatus}</strong>
-                  <span>{props.networkPeers.length ? `В сети: ${props.networkPeers.map((peer) => peer.name).join(", ")}` : "Ожидаем других игроков"}</span>
+                  <span>{props.networkParticipants.length ? `В комнате: ${props.networkParticipants.map((participant) => participant.isHost ? `${participant.name} (хозяин)` : participant.name).join(", ")}` : props.networkPeers.length ? `Подключаем: ${props.networkPeers.map((peer) => peer.name).join(", ")}` : "Ожидаем других игроков"}</span>
                   <button type="button" disabled={networkBusy} onClick={() => void leaveNetworkRoom()}>Покинуть комнату</button>
                 </div>
               )}
@@ -315,8 +348,8 @@ export function PlayersModal(props: PlayersModalProps) {
         </section>
 
         <footer className="modal-actions">
-          <button className="game-action game-action--quiet" type="button" onClick={saveAndClose}>Сохранить и продолжить</button>
-          <button className="game-action" type="button" onClick={saveAndStart}>Новое поле с этим составом</button>
+          <button className="game-action game-action--quiet" type="button" onClick={saveAndClose}>{props.canManageLobby ? "Сохранить и продолжить" : "Закрыть"}</button>
+          {props.canManageLobby ? <button className="game-action" type="button" disabled={!draftLobbyReady} title={draftLobbyReady ? undefined : "Сначала займите все человеческие места"} onClick={saveAndStart}>Новое поле с этим составом</button> : null}
         </footer>
       </section>
     </div>

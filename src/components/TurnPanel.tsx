@@ -31,6 +31,12 @@ interface TurnPanelProps {
   previousClues: TurnRecord[];
   remainingDraft: Record<string, number>;
   voteStatus: VoteStatus | null;
+  canControlSystem: boolean;
+  canSubmitHumanClue: boolean;
+  canFinishHumanGuess: boolean;
+  canEditTuning: boolean;
+  hostAvailable: boolean;
+  lobbyReady: boolean;
   onManualClueChange: (value: string) => void;
   onManualNumberChange: (value: number) => void;
   onTuningChange: (patch: Partial<TeamAiTuning>) => void;
@@ -122,9 +128,9 @@ export function TurnPanel(props: TurnPanelProps) {
                     <div className="clue-carryover__item" key={`${record.team}:${record.turn}`}>
                       <span>{record.clue}</span>
                       <div className={spymaster.controller === "ai" ? "is-readonly" : ""} aria-label={`Осталось ${remaining} из ${record.number} слов`}>
-                        {spymaster.controller === "human" ? <button type="button" disabled={remaining === 0} onClick={() => props.onRemainingDraftChange(record, remaining - 1)}>−</button> : null}
+                        {spymaster.controller === "human" ? <button type="button" disabled={!props.canSubmitHumanClue || props.loading || remaining === 0} onClick={() => props.onRemainingDraftChange(record, remaining - 1)}>−</button> : null}
                         <strong>{remaining}<i>/{record.number}</i></strong>
-                        {spymaster.controller === "human" ? <button type="button" disabled={remaining >= record.number} onClick={() => props.onRemainingDraftChange(record, remaining + 1)}>+</button> : null}
+                        {spymaster.controller === "human" ? <button type="button" disabled={!props.canSubmitHumanClue || props.loading || remaining >= record.number} onClick={() => props.onRemainingDraftChange(record, remaining + 1)}>+</button> : null}
                       </div>
                     </div>
                   );
@@ -136,10 +142,10 @@ export function TurnPanel(props: TurnPanelProps) {
             <>
               <div className="turn-tuning">
                 <span>Охват подсказки</span>
-                <ChoiceSelect value={props.tuning.ambition} options={AMBITION_OPTIONS} ariaLabel="Охват подсказки" onChange={(ambition) => props.onTuningChange({ ambition })} />
+                <ChoiceSelect disabled={!props.canEditTuning} value={props.tuning.ambition} options={AMBITION_OPTIONS} ariaLabel="Охват подсказки" onChange={(ambition) => props.onTuningChange({ ambition })} />
               </div>
-              <button className="game-action" type="button" aria-busy={props.loading} disabled={props.loading} onClick={props.onRequestClue}>
-                {props.loading ? "Ведущий думает…" : "Получить подсказку"}
+              <button className="game-action" type="button" aria-busy={props.loading} disabled={props.loading || !props.canControlSystem || !props.hostAvailable} onClick={props.onRequestClue}>
+                {!props.hostAvailable ? "Связь с хозяином потеряна" : !props.lobbyReady ? "Ждём игроков" : props.loading ? "Ведущий думает…" : props.canControlSystem ? "Получить подсказку" : "Хозяин запускает ведущего"}
               </button>
             </>
           ) : (
@@ -152,13 +158,13 @@ export function TurnPanel(props: TurnPanelProps) {
                     onChange={(event) => props.onManualClueChange(event.target.value)}
                     placeholder="Например, космос"
                     autoComplete="off"
-                    disabled={props.loading}
-                    autoFocus
+                    disabled={props.loading || !props.canSubmitHumanClue || !props.hostAvailable}
+                    autoFocus={props.canSubmitHumanClue}
                   />
                 </label>
                 <div className="clue-field">
                   <span>Количество</span>
-                  <ChoiceSelect value={String(props.manualNumber)} options={NUMBER_OPTIONS} ariaLabel="Количество слов" onChange={(value) => props.onManualNumberChange(Number(value))} />
+                  <ChoiceSelect disabled={!props.canSubmitHumanClue || props.loading || !props.hostAvailable} value={String(props.manualNumber)} options={NUMBER_OPTIONS} ariaLabel="Количество слов" onChange={(value) => props.onManualNumberChange(Number(value))} />
                 </div>
               </div>
               <small className="clue-vocabulary-note">
@@ -166,8 +172,8 @@ export function TurnPanel(props: TurnPanelProps) {
                   ? "В команде нет ИИ: подсказка не обязана быть в словаре Navec."
                   : "В команде есть ИИ: подсказка должна быть знакома семантической модели."}
               </small>
-              <button className="game-action" aria-busy={props.loading} disabled={props.loading || !props.manualClue.trim()}>
-                {props.loading ? "Проверяю слово…" : "Передать подсказку"}
+              <button className="game-action" aria-busy={props.loading} disabled={props.loading || !props.manualClue.trim() || !props.canSubmitHumanClue || !props.hostAvailable}>
+                {!props.hostAvailable ? "Связь с хозяином потеряна" : !props.lobbyReady ? "Ждём игроков" : props.loading ? "Проверяю слово…" : props.canSubmitHumanClue ? "Передать подсказку" : "Ожидаем ведущего"}
               </button>
             </form>
           )}
@@ -186,11 +192,11 @@ export function TurnPanel(props: TurnPanelProps) {
             <>
               <div className="turn-tuning">
                 <span>Риск ответов</span>
-                <ChoiceSelect value={props.tuning.risk} options={RISK_OPTIONS} ariaLabel="Риск ответов" onChange={(risk) => props.onTuningChange({ risk })} />
+                <ChoiceSelect disabled={!props.canEditTuning} value={props.tuning.risk} options={RISK_OPTIONS} ariaLabel="Риск ответов" onChange={(risk) => props.onTuningChange({ risk })} />
               </div>
               <p>ИИ сам решит, сколько карточек открыть. Жёсткого лимита ответов нет.</p>
-              <button className="game-action" type="button" aria-busy={props.loading} disabled={props.loading} onClick={props.onStartAiGuess}>
-                {props.loading ? "ИИ выбирает…" : "Начать ответы ИИ"}
+              <button className="game-action" type="button" aria-busy={props.loading} disabled={props.loading || !props.canControlSystem || !props.hostAvailable} onClick={props.onStartAiGuess}>
+                {!props.hostAvailable ? "Связь с хозяином потеряна" : !props.lobbyReady ? "Ждём игроков" : props.loading ? "ИИ выбирает…" : props.canControlSystem ? "Начать ответы ИИ" : "Хозяин запускает оперативников"}
               </button>
             </>
           ) : (
@@ -199,7 +205,7 @@ export function TurnPanel(props: TurnPanelProps) {
               {hasAiOperatives ? (
                 <div className="turn-tuning is-compact">
                   <span>Риск голоса ИИ</span>
-                  <ChoiceSelect value={props.tuning.risk} options={RISK_OPTIONS} ariaLabel="Риск голоса ИИ" onChange={(risk) => props.onTuningChange({ risk })} />
+                  <ChoiceSelect disabled={!props.canEditTuning} value={props.tuning.risk} options={RISK_OPTIONS} ariaLabel="Риск голоса ИИ" onChange={(risk) => props.onTuningChange({ risk })} />
                 </div>
               ) : null}
               {props.voteStatus && props.voteStatus.total > 1 ? (
@@ -211,8 +217,8 @@ export function TurnPanel(props: TurnPanelProps) {
               ) : (
                 <div className="guess-progress"><span>Открыто в этом ходу</span><strong>{props.pickedCount}</strong></div>
               )}
-              <button className="game-action game-action--quiet" type="button" aria-busy={props.loading} disabled={props.loading} onClick={props.onFinishHumanGuess}>
-                {props.pickedCount ? "Закончить ход" : "Пропустить ход"}
+              <button className="game-action game-action--quiet" type="button" aria-busy={props.loading} disabled={props.loading || !props.canFinishHumanGuess || !props.hostAvailable} onClick={props.onFinishHumanGuess}>
+                {!props.hostAvailable ? "Связь с хозяином потеряна" : !props.lobbyReady ? "Ждём игроков" : !props.canFinishHumanGuess ? "Ожидаем оперативника" : props.pickedCount ? "Закончить ход" : "Пропустить ход"}
               </button>
             </>
           )}
@@ -236,9 +242,9 @@ export function TurnPanel(props: TurnPanelProps) {
             </div>
           ) : null}
           {props.winner ? (
-            <button className="game-action" type="button" onClick={props.onNewGame}>Сыграть ещё раз</button>
+            <button className="game-action" type="button" disabled={!props.canControlSystem || !props.hostAvailable} onClick={props.onNewGame}>{!props.lobbyReady ? "Ждём игроков" : props.canControlSystem ? "Сыграть ещё раз" : "Хозяин создаёт новую партию"}</button>
           ) : (
-            <button className="game-action" type="button" onClick={props.onContinue}>Передать ход {TEAM_NAMES[props.nextTeam]}</button>
+            <button className="game-action" type="button" disabled={!props.canControlSystem || !props.hostAvailable} onClick={props.onContinue}>{!props.lobbyReady ? "Ждём игроков" : props.canControlSystem ? `Передать ход ${TEAM_NAMES[props.nextTeam]}` : "Хозяин передаёт ход"}</button>
           )}
         </section>
       ) : null}

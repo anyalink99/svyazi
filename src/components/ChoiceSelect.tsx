@@ -44,6 +44,10 @@ export function ChoiceSelect<T extends string>({
     };
   }, [open]);
 
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
+
   function move(direction: -1 | 1) {
     const next = (selectedIndex + direction + options.length) % options.length;
     onChange(options[next].value);
@@ -51,7 +55,7 @@ export function ChoiceSelect<T extends string>({
   }
 
   return (
-    <div ref={rootRef} className={`choice-select${open ? " is-open" : ""}${className ? ` ${className}` : ""}`}>
+    <div ref={rootRef} className={`choice-select${open ? " is-open" : ""}${disabled ? " is-disabled" : ""}${className ? ` ${className}` : ""}`}>
       <button
         className="choice-select__trigger"
         type="button"
@@ -78,6 +82,7 @@ export function ChoiceSelect<T extends string>({
             role="option"
             aria-selected={option.value === value}
             tabIndex={open ? 0 : -1}
+            disabled={disabled}
             key={option.value}
             onClick={() => {
               onChange(option.value);
