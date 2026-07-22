@@ -46,9 +46,9 @@ interface TurnPanelProps {
 const TEAM_NAMES: Record<Team, string> = { red: "красных", blue: "синих" };
 
 const AMBITION_OPTIONS: ChoiceOption<ClueAmbition>[] = [
-  { value: "focused", label: "Точечно · 1–2" },
-  { value: "balanced", label: "Умеренно · до 4" },
-  { value: "broad", label: "Широко · до 8" }
+  { value: "focused", label: "Точечно · ≈1,3" },
+  { value: "balanced", label: "Взвешенно · ≈2,3" },
+  { value: "broad", label: "Широко · ≈3,3" }
 ];
 
 const RISK_OPTIONS: ChoiceOption<OperativeProfile>[] = [
@@ -90,7 +90,7 @@ export function TurnPanel(props: TurnPanelProps) {
   return (
     <aside className={`turn-panel is-${props.team}`} aria-live="polite">
       <div className="phase-rail" aria-label="Этапы хода">
-        <div className={props.phase === "clue" ? "is-current" : props.phase !== "clue" ? "is-done" : ""}>
+        <div className={props.phase === "clue" ? "is-current" : "is-done"}>
           <span>1</span><strong>Подсказка</strong>
         </div>
         <i aria-hidden="true" />

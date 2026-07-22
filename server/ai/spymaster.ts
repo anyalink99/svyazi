@@ -1,4 +1,5 @@
 import type { CardState, ClueAmbition, ClueAnalysis, RankedCard, Team } from "../../src/domain/types.js";
+import { hashString } from "../../src/domain/random.js";
 import { createClueValidator, type LegalityResult } from "./legality.js";
 import type { SemanticSpace } from "../semantic/space.js";
 
@@ -8,10 +9,10 @@ export interface SpymasterOptions {
   neighborsPerTarget?: number;
 }
 
-const AMBITION_SETTINGS: Record<ClueAmbition, { maxNumber: number; breadthWeight: number }> = {
-  focused: { maxNumber: 2, breadthWeight: 1.55 },
-  balanced: { maxNumber: 4, breadthWeight: 2.15 },
-  broad: { maxNumber: 8, breadthWeight: 2.7 }
+const AMBITION_SETTINGS: Record<ClueAmbition, { maxNumber: number; baseTarget: number; extraChance: number; targetPull: number }> = {
+  focused: { maxNumber: 2, baseTarget: 1, extraChance: 0.29, targetPull: 4.5 },
+  balanced: { maxNumber: 4, baseTarget: 2, extraChance: 0.78, targetPull: 7 },
+  broad: { maxNumber: 5, baseTarget: 3, extraChance: 0.95, targetPull: 10 }
 };
 
 interface BoardSemanticContext {
@@ -85,10 +86,16 @@ export function generateClue(
   const ownWords = unrevealed.filter((card) => card.role === team).map((card) => card.word);
   if (ownWords.length === 0) throw new Error("У команды не осталось слов.");
 
-  const ambition = AMBITION_SETTINGS[options.ambition ?? "balanced"];
+  const ambitionName = options.ambition ?? "balanced";
+  const ambition = AMBITION_SETTINGS[ambitionName];
   const maxNumber = Math.max(1, Math.min(options.maxNumber ?? ambition.maxNumber, ownWords.length));
   const neighborLimit = options.neighborsPerTarget ?? 160;
   const boardWords = cards.map((card) => card.word);
+  const targetRoll = hashString(`${boardWords.join("|")}:${team}:${ambitionName}`) / 0x1_0000_0000;
+  const desiredNumber = Math.min(
+    maxNumber,
+    ambition.baseTarget + (targetRoll < ambition.extraChance ? 1 : 0)
+  );
   const context = getBoardContext(semantic, boardWords);
   const candidateSet = new Set<string>();
   for (const card of unrevealed) {
@@ -181,23 +188,36 @@ export function generateClue(
       ) {
         bestRiskyFallback = fallback;
       }
-      continue;
+      if (ambitionName !== "broad") continue;
     }
 
-    for (let number = 1; number <= safePrefix; number += 1) {
-      const targets = ranked.slice(0, number);
+    const ownRanked = ranked.filter((card) => card.role === team);
+    const evaluatedPrefix = ambitionName === "broad"
+      ? Math.min(maxNumber, ownRanked.length)
+      : safePrefix;
+    for (let number = 1; number <= evaluatedPrefix; number += 1) {
+      const targets = ambitionName === "broad" ? ownRanked.slice(0, number) : ranked.slice(0, number);
       const meanTarget = targets.reduce((sum, card) => sum + card.similarity, 0) / number;
       const weakestTarget = targets[number - 1].similarity;
+      const intruders = ranked
+        .slice(0, targets[number - 1].rank - 1)
+        .filter((card) => card.role !== team);
+      if (ambitionName === "broad" && (intruders.length > 2 || intruders.some((card) => card.role === "assassin"))) {
+        continue;
+      }
       const dangerSimilarity = strongestDanger?.similarity ?? -1;
       const margin = weakestTarget - dangerSimilarity;
       const assassinPressure = Math.max(0, assassinSimilarity - 0.16);
       const enemyPressure = Math.max(0, enemySimilarity - 0.28);
       const neutralPressure = Math.max(0, neutralSimilarity - 0.35);
+      const targetDistance = Math.abs(number - desiredNumber);
       const score =
-        number * ambition.breadthWeight +
+        -targetDistance * ambition.targetPull +
+        Math.min(number, desiredNumber) * 0.12 +
         meanTarget * 1.35 +
         weakestTarget * 0.8 +
         margin * 5.2 -
+        intruders.length * 3.1 -
         assassinPressure * 2.7 -
         enemyPressure * 0.8 -
         neutralPressure * 0.35;

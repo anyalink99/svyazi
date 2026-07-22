@@ -11,5 +11,6 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["server", "src/domain", "scripts", "tests"]
+  "include": ["server", "src/domain", "scripts", "tests"],
+  "exclude": ["src/domain/session.ts"]
 }

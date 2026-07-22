@@ -1,3 +1,5 @@
+import { unresolvedClues } from "./domain/clues.js";
+import { createGame } from "./domain/game.js";
 import type {
   ClueAnalysis,
   ClueAmbition,
@@ -8,7 +10,11 @@ import type {
   SemanticMetadata,
   SimulationSummary
 } from "./domain/types.js";
-import type { GameRoom } from "./domain/multiplayer.js";
+import { BrowserPackedSemanticSpace } from "./semantic/browser-packed.js";
+import { planGuesses } from "../server/ai/operative.js";
+import { generateClue } from "../server/ai/spymaster.js";
+import { analyzeProvidedClue, resolveGuesses, runTurn } from "../server/ai/turn.js";
+import { simulateGames } from "../server/simulation.js";
 
 export interface ApiStatus {
   ok: true;
@@ -30,82 +36,77 @@ export interface ResolveResult {
   record: GameState["history"][number];
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers
-    }
-  });
-  const payload = (await response.json()) as T & { error?: string };
-  if (!response.ok) throw new Error(payload.error ?? `Ошибка API: ${response.status}`);
-  return payload;
+const semanticPromise = BrowserPackedSemanticSpace.load(import.meta.env.BASE_URL);
+
+async function semantic() {
+  return semanticPromise;
 }
 
 export const api = {
-  status: () => request<ApiStatus>("/api/status"),
-  newGame: (seed?: number, startingTeam?: "red" | "blue") =>
-    request<GameState>("/api/games", {
-      method: "POST",
-      body: JSON.stringify({
-        ...(seed === undefined ? {} : { seed }),
-        ...(startingTeam === undefined ? {} : { startingTeam })
-      })
-    }),
-  clue: (state: GameState, ambition: ClueAmbition = "balanced", maxNumber?: number) =>
-    request<ClueAnalysis>("/api/clues", {
-      method: "POST",
-      body: JSON.stringify({ state, ambition, ...(maxNumber === undefined ? {} : { maxNumber }) })
-    }),
-  analyzeClue: (state: GameState, clue: string, number: number, allowUnknown = false) =>
-    request<ClueAnalysis>("/api/clues/analyze", {
-      method: "POST",
-      body: JSON.stringify({ state, clue, number, allowUnknown })
-    }),
-  guesses: (state: GameState, clue: string, number: number, profile: OperativeProfile) =>
-    request<GuessPlan>("/api/guesses", {
-      method: "POST",
-      body: JSON.stringify({ state, clue, number, profile })
-    }),
-  turn: (
+  async status(): Promise<ApiStatus> {
+    const space = await semantic();
+    return {
+      ok: true,
+      model: space.metadata,
+      modes: ["ai-vs-ai", "human-operative", "human-spymaster", "p2p"]
+    };
+  },
+
+  async newGame(seed?: number, startingTeam?: "red" | "blue"): Promise<GameState> {
+    const space = await semantic();
+    return createGame(space.boardWords(), seed, startingTeam);
+  },
+
+  async clue(state: GameState, ambition: ClueAmbition = "balanced", maxNumber?: number): Promise<ClueAnalysis> {
+    return generateClue(await semantic(), state.cards, state.turn, { ambition, maxNumber });
+  },
+
+  async analyzeClue(state: GameState, clue: string, number: number, allowUnknown = false): Promise<ClueAnalysis> {
+    return analyzeProvidedClue(await semantic(), state, clue, number, allowUnknown);
+  },
+
+  async guesses(state: GameState, clue: string, number: number, profile: OperativeProfile): Promise<GuessPlan> {
+    return planGuesses(
+      await semantic(),
+      state.cards,
+      clue,
+      number,
+      profile,
+      state.seed + state.turnNumber,
+      unresolvedClues(state.history, state.turn)
+    );
+  },
+
+  async turn(
     state: GameState,
     profile: OperativeProfile,
     provided?: { clue: string; number: number; allowUnknown?: boolean },
     clueAmbition: ClueAmbition = "balanced"
-  ) =>
-    request<TurnResult>("/api/turns", {
-      method: "POST",
-      body: JSON.stringify({
-        state,
-        profile,
-        clue: provided?.clue,
-        number: provided?.number,
-        allowUnknownClue: provided?.allowUnknown,
-        clueAmbition
-      })
-    }),
-  resolveTurn: (
+  ): Promise<TurnResult> {
+    return runTurn(await semantic(), state, {
+      profile,
+      providedClue: provided?.clue,
+      providedNumber: provided?.number,
+      allowUnknownClue: provided?.allowUnknown,
+      clueAmbition
+    });
+  },
+
+  async resolveTurn(
     state: GameState,
     clue: string,
     number: number,
     picks: number[],
     stoppedEarly = false,
     allowUnknown = false
-  ) =>
-    request<ResolveResult>("/api/turns/resolve", {
-      method: "POST",
-      body: JSON.stringify({ state, clue, number, picks, stoppedEarly, allowUnknown })
-    }),
-  simulate: (games: number, redProfile: OperativeProfile, blueProfile: OperativeProfile) =>
-    request<SimulationSummary>("/api/simulations", {
-      method: "POST",
-      body: JSON.stringify({ games, redProfile, blueProfile })
-    }),
-  createRoom: (hostName: string) =>
-    request<GameRoom>("/api/rooms", {
-      method: "POST",
-      body: JSON.stringify({ hostName })
-    }),
-  room: (code: string) => request<GameRoom>(`/api/rooms/${encodeURIComponent(code)}`)
+  ): Promise<ResolveResult> {
+    const analysis = analyzeProvidedClue(await semantic(), state, clue, number, allowUnknown);
+    return { clue: analysis, ...resolveGuesses(state, analysis, picks, stoppedEarly) };
+  },
+
+  async simulate(games: number, redProfile: OperativeProfile, blueProfile: OperativeProfile): Promise<SimulationSummary> {
+    const space = await semantic();
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    return simulateGames(space, { games, redProfile, blueProfile });
+  }
 };

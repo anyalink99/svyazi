@@ -1,4 +1,3 @@
-import { performance } from "node:perf_hooks";
 import { createGame } from "../src/domain/game.js";
 import type { OperativeProfile, SimulationSummary, Team } from "../src/domain/types.js";
 import { runTurn } from "./ai/turn.js";

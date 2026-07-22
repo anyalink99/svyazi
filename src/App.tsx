@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ApiStatus, type ResolveResult } from "./api.js";
 import { Board } from "./components/Board.js";
 import { DeveloperModal } from "./components/DeveloperModal.js";
@@ -8,8 +8,10 @@ import { TurnPanel, type GamePhase, type VoteStatus } from "./components/TurnPan
 import { remainingForTeam } from "./domain/game.js";
 import type { AiTuning, TeamSeats } from "./domain/multiplayer.js";
 import { allSeats, cloneSeats, DEFAULT_AI_TUNING, DEFAULT_SEATS, operativeNames, seatTeamAndRole } from "./domain/setup.js";
+import { loadSession, saveSession } from "./domain/session.js";
 import type { ClueAnalysis, GameState, GuessPlan, OperativeProfile, Team, TurnRecord } from "./domain/types.js";
 import { castCardVote } from "./domain/voting.js";
+import { useP2PRoom, type MultiplayerCommand, type SharedSession } from "./multiplayer/p2p.js";
 
 const REVEAL_DELAY = 520;
 const DEFAULT_LOCAL_SEAT_ID = "red-operative-you";
@@ -43,30 +45,37 @@ function commitRemainingDraft(state: GameState, team: Team, draft: Record<string
 }
 
 export function App() {
+  const [restoredSession] = useState(() => loadSession());
+  const skipInitialVotingReset = useRef(true);
   const [status, setStatus] = useState<ApiStatus | null>(null);
-  const [game, setGame] = useState<GameState | null>(null);
-  const [turnBase, setTurnBase] = useState<GameState | null>(null);
-  const [phase, setPhase] = useState<GamePhase>("clue");
-  const [seats, setSeats] = useState<TeamSeats>(() => cloneSeats(DEFAULT_SEATS));
-  const [tuning, setTuning] = useState<AiTuning>(() => structuredClone(DEFAULT_AI_TUNING));
-  const [localSeatId, setLocalSeatId] = useState<string | null>(DEFAULT_LOCAL_SEAT_ID);
-  const [clue, setClue] = useState<ClueAnalysis | null>(null);
-  const [lastPlan, setLastPlan] = useState<GuessPlan | null>(null);
-  const [lastRecord, setLastRecord] = useState<TurnRecord | null>(null);
-  const [pickedIndices, setPickedIndices] = useState<number[]>([]);
-  const [votes, setVotes] = useState<Record<string, number>>({});
-  const [voteCursor, setVoteCursor] = useState(0);
-  const [voteMessage, setVoteMessage] = useState<string | null>(null);
+  const [game, setGame] = useState<GameState | null>(restoredSession?.game ?? null);
+  const [turnBase, setTurnBase] = useState<GameState | null>(restoredSession?.turnBase ?? null);
+  const [phase, setPhase] = useState<GamePhase>(restoredSession?.phase ?? "clue");
+  const [seats, setSeats] = useState<TeamSeats>(() => restoredSession?.seats ?? cloneSeats(DEFAULT_SEATS));
+  const [tuning, setTuning] = useState<AiTuning>(() => restoredSession?.tuning ?? structuredClone(DEFAULT_AI_TUNING));
+  const [localSeatId, setLocalSeatId] = useState<string | null>(restoredSession?.localSeatId ?? DEFAULT_LOCAL_SEAT_ID);
+  const [clue, setClue] = useState<ClueAnalysis | null>(restoredSession?.clue ?? null);
+  const [lastPlan, setLastPlan] = useState<GuessPlan | null>(restoredSession?.lastPlan ?? null);
+  const [lastRecord, setLastRecord] = useState<TurnRecord | null>(restoredSession?.lastRecord ?? null);
+  const [pickedIndices, setPickedIndices] = useState<number[]>(restoredSession?.pickedIndices ?? []);
+  const [votes, setVotes] = useState<Record<string, number>>(restoredSession?.votes ?? {});
+  const [voteCursor, setVoteCursor] = useState(restoredSession?.voteCursor ?? 0);
+  const [voteMessage, setVoteMessage] = useState<string | null>(restoredSession?.voteMessage ?? null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [manualClue, setManualClue] = useState("");
-  const [manualNumber, setManualNumber] = useState(2);
-  const [remainingDraft, setRemainingDraft] = useState<Record<string, number>>({});
+  const [manualClue, setManualClue] = useState(restoredSession?.manualClue ?? "");
+  const [manualNumber, setManualNumber] = useState(restoredSession?.manualNumber ?? 2);
+  const [remainingDraft, setRemainingDraft] = useState<Record<string, number>>(restoredSession?.remainingDraft ?? {});
   const [playersOpen, setPlayersOpen] = useState(false);
   const [developerOpen, setDeveloperOpen] = useState(false);
-  const [showTrace, setShowTrace] = useState(false);
-  const [showKey, setShowKey] = useState(false);
-  const [autoPlay, setAutoPlay] = useState(false);
+  const [showTrace, setShowTrace] = useState(restoredSession?.showTrace ?? false);
+  const [showKey, setShowKey] = useState(restoredSession?.showKey ?? false);
+  const [autoPlay, setAutoPlay] = useState(restoredSession?.autoPlay ?? false);
+  const network = useP2PRoom({
+    getSnapshot: buildSharedSession,
+    onSnapshot: applySharedSession,
+    onCommand: handleNetworkCommand
+  });
 
   const activeTeam = phase === "result" && lastRecord ? lastRecord.team : (game?.turn ?? "red");
   const localSeat = useMemo(() => seatTeamAndRole(seats, localSeatId), [localSeatId, seats]);
@@ -94,6 +103,70 @@ export function App() {
     setVoteCursor(0);
     setVoteMessage(null);
   }, []);
+
+  function buildSharedSession(): SharedSession | null {
+    if (!game) return null;
+    return {
+      game,
+      turnBase,
+      phase,
+      seats,
+      tuning,
+      clue,
+      lastPlan,
+      lastRecord,
+      pickedIndices,
+      votes,
+      voteCursor,
+      voteMessage,
+      manualNumber,
+      remainingDraft,
+      loading
+    };
+  }
+
+  function applySharedSession(snapshot: SharedSession) {
+    setGame(snapshot.game);
+    setTurnBase(snapshot.turnBase);
+    setPhase(snapshot.phase);
+    setSeats(snapshot.seats);
+    setTuning(snapshot.tuning);
+    setClue(snapshot.clue);
+    setLastPlan(snapshot.lastPlan);
+    setLastRecord(snapshot.lastRecord);
+    setPickedIndices(snapshot.pickedIndices);
+    setVotes(snapshot.votes);
+    setVoteCursor(snapshot.voteCursor);
+    setVoteMessage(snapshot.voteMessage);
+    setManualNumber(snapshot.manualNumber);
+    setRemainingDraft(snapshot.remainingDraft);
+    setLoading(snapshot.loading);
+    setError(null);
+  }
+
+  function handleNetworkCommand(command: MultiplayerCommand) {
+    switch (command.type) {
+      case "request-clue": void requestAiClue(); break;
+      case "submit-clue": void submitHumanClue(command); break;
+      case "start-ai-guess": void startAiGuess(); break;
+      case "finish-guess": void finishHumanGuess(); break;
+      case "choose-card": void chooseCard(command.index, command.seatId); break;
+      case "continue": continueToNextTurn(); break;
+      case "new-game": void startNewGame(); break;
+      case "tuning": setTuning((current) => ({ ...current, [command.team]: { ...current[command.team], ...command.patch } })); break;
+      case "remaining": applyRemainingDraft(command.record, command.remaining); break;
+      case "seats": setSeats(command.seats); break;
+      case "all-tuning": setTuning(command.tuning); break;
+    }
+  }
+
+  function dispatchOrRun(command: MultiplayerCommand, action: () => void) {
+    if (network.role === "guest") {
+      void network.sendCommand(command);
+      return;
+    }
+    action();
+  }
 
   const resetFlow = useCallback((nextGame: GameState) => {
     setGame(nextGame);
@@ -127,19 +200,62 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.status(), api.newGame(undefined, "red")])
+    Promise.all([api.status(), restoredSession ? Promise.resolve(null) : api.newGame(undefined, "red")])
       .then(([nextStatus, nextGame]) => {
         if (cancelled) return;
         setStatus(nextStatus);
-        resetFlow(nextGame);
+        if (nextGame) resetFlow(nextGame);
       })
       .catch((caught) => {
         if (!cancelled) setError(caught instanceof Error ? caught.message : "Сервер игры недоступен.");
       });
     return () => { cancelled = true; };
-  }, [resetFlow]);
+  }, [resetFlow, restoredSession]);
 
   useEffect(() => {
+    if (!game) return;
+    saveSession({
+      game,
+      turnBase,
+      phase,
+      seats,
+      tuning,
+      localSeatId,
+      clue,
+      lastPlan,
+      lastRecord,
+      pickedIndices,
+      votes,
+      voteCursor,
+      voteMessage,
+      manualClue,
+      manualNumber,
+      remainingDraft,
+      showTrace,
+      showKey,
+      autoPlay
+    });
+  }, [
+    autoPlay, clue, game, lastPlan, lastRecord, localSeatId, manualClue, manualNumber,
+    phase, pickedIndices, remainingDraft, seats, showKey, showTrace, tuning, turnBase,
+    voteCursor, voteMessage, votes
+  ]);
+
+  useEffect(() => {
+    if (network.role !== "host") return;
+    const snapshot = buildSharedSession();
+    if (snapshot) void network.broadcastSnapshot(snapshot);
+  }, [
+    clue, game, lastPlan, lastRecord, loading, manualNumber, network.broadcastSnapshot,
+    network.role, phase, pickedIndices, remainingDraft, seats, tuning, turnBase,
+    voteCursor, voteMessage, votes
+  ]);
+
+  useEffect(() => {
+    if (skipInitialVotingReset.current) {
+      skipInitialVotingReset.current = false;
+      return;
+    }
     resetVoting();
   }, [game?.turnNumber, phase, resetVoting, seats]);
 
@@ -165,14 +281,17 @@ export function App() {
     }
   }, [game, loading, phase, remainingDraft, resetVoting, tuning]);
 
-  async function submitHumanClue() {
-    if (!game || phase !== "clue" || !manualClue.trim()) return;
+  async function submitHumanClue(input?: { clue: string; number: number; remainingDraft: Record<string, number> }) {
+    const clueWord = input?.clue ?? manualClue;
+    const clueNumber = input?.number ?? manualNumber;
+    const clueDraft = input?.remainingDraft ?? remainingDraft;
+    if (!game || phase !== "clue" || !clueWord.trim()) return;
     setLoading(true);
     setError(null);
     try {
       const teamAllowsUnknown = seats[game.turn].operatives.every((seat) => seat.controller === "human");
-      const clueBase = commitRemainingDraft(game, game.turn, remainingDraft);
-      const analyzed = await api.analyzeClue(clueBase, manualClue.trim(), manualNumber, teamAllowsUnknown);
+      const clueBase = commitRemainingDraft(game, game.turn, clueDraft);
+      const analyzed = await api.analyzeClue(clueBase, clueWord.trim(), clueNumber, teamAllowsUnknown);
       setGame(clueBase);
       setTurnBase(clueBase);
       setClue(analyzed);
@@ -257,7 +376,7 @@ export function App() {
     if (mustStop) void finishHumanGuess(nextPicks, false);
   }
 
-  async function chooseCard(index: number) {
+  async function chooseCard(index: number, voterSeatId: string | null = null) {
     if (!game || !turnBase || !clue || phase !== "guess" || loading || game.cards[index]?.revealed) return;
     const team = turnBase.turn;
     const operatives = seats[team].operatives;
@@ -269,7 +388,7 @@ export function App() {
       return;
     }
 
-    const voter = humans[voteCursor] ?? humans[0];
+    const voter = humans.find((seat) => seat.id === voterSeatId) ?? humans[voteCursor] ?? humans[0];
     if (!voter) return;
     setVoteMessage(null);
     let round = castCardVote(votes, operatives.map((seat) => seat.id), voter.id, index);
@@ -326,7 +445,7 @@ export function App() {
   }, [resetVoting]);
 
   useEffect(() => {
-    if (!autoPlay || !game || loading || game.winner) return;
+    if (!autoPlay || network.role === "guest" || !game || loading || game.winner) return;
     const visibleTeam = phase === "result" && lastRecord ? lastRecord.team : game.turn;
     let action: (() => void) | null = null;
     if (phase === "clue" && seats[visibleTeam].spymaster.controller === "ai") action = () => void requestAiClue();
@@ -335,7 +454,7 @@ export function App() {
     if (!action) return;
     const timer = window.setTimeout(action, phase === "result" ? 1100 : 720);
     return () => window.clearTimeout(timer);
-  }, [autoPlay, continueToNextTurn, game, lastRecord, loading, phase, requestAiClue, seats, startAiGuess]);
+  }, [autoPlay, continueToNextTurn, game, lastRecord, loading, network.role, phase, requestAiClue, seats, startAiGuess]);
 
   const counts = game ? { red: remainingForTeam(game, "red"), blue: remainingForTeam(game, "blue") } : { red: 0, blue: 0 };
   const seatCounts = useMemo(() => {
@@ -344,14 +463,24 @@ export function App() {
   }, [seats]);
 
   function changeActiveTuning(patch: Partial<AiTuning[Team]>) {
-    setTuning((current) => ({ ...current, [activeTeam]: { ...current[activeTeam], ...patch } }));
+    dispatchOrRun(
+      { type: "tuning", team: activeTeam, patch },
+      () => setTuning((current) => ({ ...current, [activeTeam]: { ...current[activeTeam], ...patch } }))
+    );
   }
 
-  function changeRemainingDraft(record: TurnRecord, remaining: number) {
+  function applyRemainingDraft(record: TurnRecord, remaining: number) {
     setRemainingDraft((current) => ({
       ...current,
       [`${record.team}:${record.turn}`]: Math.max(0, Math.min(record.number, remaining))
     }));
+  }
+
+  function changeRemainingDraft(record: TurnRecord, remaining: number) {
+    dispatchOrRun(
+      { type: "remaining", record, remaining },
+      () => applyRemainingDraft(record, remaining)
+    );
   }
 
   return (
@@ -367,10 +496,7 @@ export function App() {
           <div className="score is-blue"><strong>{counts.blue}</strong><span>синие</span></div>
         </div>
         <nav className="header-tools">
-          <button type="button" onClick={() => setPlayersOpen(true)}><span className="players-icon">♟♟</span> Игроки <small>{seatCounts.humans} + {seatCounts.ai} ИИ</small></button>
-          <button type="button" className="lab-button" onClick={() => setDeveloperOpen(true)} aria-label="Открыть лабораторию">
-            <span aria-hidden="true">⌁</span><b>Лаборатория</b>
-          </button>
+          <button type="button" onClick={() => setPlayersOpen(true)}><span className="players-icon">♟♟</span> Настройка лобби <small>{seatCounts.humans} + {seatCounts.ai} ИИ</small></button>
         </nav>
       </header>
 
@@ -392,7 +518,10 @@ export function App() {
               showTrace={showTrace}
               interactive={Boolean(phase === "guess" && localOperativeCanAct && !loading && !persistentSpymasterView)}
               currentTeam={activeTeam}
-              onCardClick={(index) => void chooseCard(index)}
+              onCardClick={(index) => dispatchOrRun(
+                { type: "choose-card", index, seatId: localSeatId },
+                () => void chooseCard(index, localSeatId)
+              )}
             />
           ) : <div className="board-loading"><span />Раскладываю карточки…</div>}
         </section>
@@ -420,28 +549,51 @@ export function App() {
               onManualNumberChange={setManualNumber}
               onTuningChange={changeActiveTuning}
               onRemainingDraftChange={changeRemainingDraft}
-              onSubmitClue={() => void submitHumanClue()}
-              onRequestClue={() => void requestAiClue()}
-              onStartAiGuess={() => void startAiGuess()}
-              onFinishHumanGuess={() => void finishHumanGuess()}
-              onContinue={continueToNextTurn}
-              onNewGame={() => void startNewGame()}
+              onSubmitClue={() => dispatchOrRun(
+                { type: "submit-clue", clue: manualClue, number: manualNumber, remainingDraft },
+                () => void submitHumanClue()
+              )}
+              onRequestClue={() => dispatchOrRun({ type: "request-clue" }, () => void requestAiClue())}
+              onStartAiGuess={() => dispatchOrRun({ type: "start-ai-guess" }, () => void startAiGuess())}
+              onFinishHumanGuess={() => dispatchOrRun({ type: "finish-guess" }, () => void finishHumanGuess())}
+              onContinue={() => dispatchOrRun({ type: "continue" }, continueToNextTurn)}
+              onNewGame={() => dispatchOrRun({ type: "new-game" }, () => void startNewGame())}
             />
           ) : null}
           {game ? <History history={game.history} /> : null}
         </div>
       </main>
 
+      <button type="button" className="lab-fab" onClick={() => setDeveloperOpen(true)} aria-label="Открыть лабораторию">
+        <svg viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M12 4h8M14 4v8L7.5 24.2A2.6 2.6 0 0 0 9.8 28h12.4a2.6 2.6 0 0 0 2.3-3.8L18 12V4" />
+          <path d="M10.5 21h11" />
+          <circle cx="14" cy="24" r="1" />
+          <circle cx="19" cy="18" r="1" />
+        </svg>
+        <span>Лаборатория</span>
+      </button>
+
       <PlayersModal
         open={playersOpen}
         seats={seats}
         tuning={tuning}
         localSeatId={localSeatId}
-        onSeatsChange={setSeats}
-        onTuningChange={setTuning}
+        networkRole={network.role}
+        networkRoomCode={network.roomCode}
+        networkStatus={network.status}
+        networkPeers={network.peers}
+        onSeatsChange={(nextSeats) => dispatchOrRun({ type: "seats", seats: nextSeats }, () => setSeats(nextSeats))}
+        onTuningChange={(nextTuning) => dispatchOrRun({ type: "all-tuning", tuning: nextTuning }, () => setTuning(nextTuning))}
         onLocalSeatChange={setLocalSeatId}
         onClose={() => setPlayersOpen(false)}
-        onNewGame={() => void startNewGame()}
+        onNewGame={() => dispatchOrRun({ type: "new-game" }, () => void startNewGame())}
+        onCreateRoom={network.create}
+        onJoinRoom={async (code, name) => {
+          await network.join(code, name);
+          setLocalSeatId(null);
+        }}
+        onLeaveRoom={network.leave}
       />
       <DeveloperModal
         open={developerOpen}
@@ -456,7 +608,7 @@ export function App() {
         onShowKeyChange={setShowKey}
         autoPlay={autoPlay}
         onAutoPlayChange={setAutoPlay}
-        onNewGame={() => void startNewGame()}
+        onNewGame={() => dispatchOrRun({ type: "new-game" }, () => void startNewGame())}
         onClose={() => setDeveloperOpen(false)}
       />
 

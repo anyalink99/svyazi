@@ -47,6 +47,16 @@ describe("semantic agents", () => {
     expect(clue.rankings.slice(0, clue.number).every((card) => card.role === "red")).toBe(true);
   });
 
+  it("changes the intended clue width with the spymaster ambition", () => {
+    const focused = generateClue(semantic, board, "red", { ambition: "focused" });
+    const balanced = generateClue(semantic, board, "red", { ambition: "balanced" });
+    const broad = generateClue(semantic, board, "red", { ambition: "broad" });
+
+    expect(focused.number).toBeLessThanOrEqual(2);
+    expect(balanced.number).toBeGreaterThanOrEqual(focused.number);
+    expect(broad.number).toBeGreaterThanOrEqual(balanced.number);
+  });
+
   it("lets an operative rank cards without a role map", () => {
     const publicCards = board.map(({ word, revealed }) => ({ word, revealed }));
     const guesses = planGuesses(semantic, publicCards, "космос", 3, "balanced", 7);
@@ -68,6 +78,18 @@ describe("semantic agents", () => {
 
     expect(guesses.picks.some((pick) => ["гитара", "скрипка"].includes(pick.word))).toBe(true);
     expect(guesses.picks.some((pick) => ["ракета", "звезда", "планета"].includes(pick.word))).toBe(true);
+  });
+
+  it("makes balanced operatives aim for the declaration and daring ones sometimes go beyond it", () => {
+    const publicCards = board.map(({ word, revealed }) => ({ word, revealed }));
+    const balanced = planGuesses(semantic, publicCards, "космос", 2, "balanced", 19);
+    const daringRuns = Array.from({ length: 40 }, (_, seed) =>
+      planGuesses(semantic, publicCards, "космос", 2, "daring", seed + 1).picks.length
+    );
+
+    expect(balanced.picks).toHaveLength(2);
+    expect(daringRuns.every((count) => count >= 2)).toBe(true);
+    expect(daringRuns.some((count) => count > 2)).toBe(true);
   });
 
   it("plays a complete agent turn and records it", () => {

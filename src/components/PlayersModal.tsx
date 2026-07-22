@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { api } from "../api.js";
 import type { AiTuning, ControllerKind, SeatAssignment, TeamSeats } from "../domain/multiplayer.js";
 import { cloneSeats, DEFAULT_AI_TUNING } from "../domain/setup.js";
 import type { ClueAmbition, OperativeProfile, Team } from "../domain/types.js";
 import { useModalPresence } from "../hooks/useModalPresence.js";
+import type { NetworkRole, PeerInfo } from "../multiplayer/p2p.js";
 import { ChoiceSelect, type ChoiceOption } from "./ChoiceSelect.js";
 
 interface PlayersModalProps {
@@ -11,11 +11,18 @@ interface PlayersModalProps {
   seats: TeamSeats;
   tuning: AiTuning;
   localSeatId: string | null;
+  networkRole: NetworkRole;
+  networkRoomCode: string;
+  networkStatus: string;
+  networkPeers: PeerInfo[];
   onSeatsChange: (seats: TeamSeats) => void;
   onTuningChange: (tuning: AiTuning) => void;
   onLocalSeatChange: (seatId: string | null) => void;
   onClose: () => void;
   onNewGame: () => void;
+  onCreateRoom: (name: string) => Promise<string>;
+  onJoinRoom: (code: string, name: string) => Promise<void>;
+  onLeaveRoom: () => Promise<void>;
 }
 
 interface SetupPreset {
@@ -31,9 +38,9 @@ const CONTROLLER_OPTIONS: ChoiceOption<ControllerKind>[] = [
 ];
 
 const AMBITION_OPTIONS: ChoiceOption<ClueAmbition>[] = [
-  { value: "focused", label: "Точечно" },
-  { value: "balanced", label: "Умеренно" },
-  { value: "broad", label: "Широко" }
+  { value: "focused", label: "Точечно · ≈1,3" },
+  { value: "balanced", label: "Взвешенно · ≈2,3" },
+  { value: "broad", label: "Широко · ≈3,3" }
 ];
 
 const RISK_OPTIONS: ChoiceOption<OperativeProfile>[] = [
@@ -94,7 +101,8 @@ function SeatEditor({
   removable,
   onChange,
   onMakeLocal,
-  onRemove
+  onRemove,
+  removing = false
 }: {
   label: string;
   value: SeatAssignment;
@@ -103,9 +111,10 @@ function SeatEditor({
   onChange: (value: SeatAssignment) => void;
   onMakeLocal: () => void;
   onRemove?: () => void;
+  removing?: boolean;
 }) {
   return (
-    <div className={`seat-editor${local ? " is-local" : ""}`}>
+    <div className={`seat-editor${local ? " is-local" : ""}${removing ? " is-removing" : ""}`}>
       <strong>{label}</strong>
       <ChoiceSelect
         value={value.controller}
@@ -128,11 +137,15 @@ function SeatEditor({
 }
 
 export function PlayersModal(props: PlayersModalProps) {
-  const [roomCode, setRoomCode] = useState<string | null>(null);
-  const [creatingRoom, setCreatingRoom] = useState(false);
+  const [networkName, setNetworkName] = useState("Игрок");
+  const [networkCode, setNetworkCode] = useState("");
+  const [networkBusy, setNetworkBusy] = useState(false);
+  const [networkError, setNetworkError] = useState<string | null>(null);
   const [draftSeats, setDraftSeats] = useState<TeamSeats>(() => cloneSeats(props.seats));
   const [draftTuning, setDraftTuning] = useState<AiTuning>(() => structuredClone(props.tuning));
   const [draftLocalSeatId, setDraftLocalSeatId] = useState<string | null>(props.localSeatId);
+  const [removingSeatIds, setRemovingSeatIds] = useState<Set<string>>(() => new Set());
+  const [roomOpen, setRoomOpen] = useState(false);
   const presence = useModalPresence(props.open, props.onClose);
 
   useEffect(() => {
@@ -140,7 +153,16 @@ export function PlayersModal(props: PlayersModalProps) {
     setDraftSeats(cloneSeats(props.seats));
     setDraftTuning(structuredClone(props.tuning));
     setDraftLocalSeatId(props.localSeatId);
+    setRemovingSeatIds(new Set());
+    setRoomOpen(props.networkRole !== "offline");
   }, [props.open]);
+
+  useEffect(() => {
+    if (!props.open || props.networkRole !== "guest") return;
+    setDraftSeats(cloneSeats(props.seats));
+    setDraftTuning(structuredClone(props.tuning));
+    setDraftLocalSeatId(props.localSeatId);
+  }, [props.localSeatId, props.networkRole, props.seats, props.tuning]);
 
   if (!presence.mounted) return null;
 
@@ -172,11 +194,19 @@ export function PlayersModal(props: PlayersModalProps) {
   function removeOperative(team: Team, index: number) {
     const removed = draftSeats[team].operatives[index];
     if (draftSeats[team].operatives.length <= 1) return;
-    setDraftSeats({
-      ...draftSeats,
-      [team]: { ...draftSeats[team], operatives: draftSeats[team].operatives.filter((_, seatIndex) => seatIndex !== index) }
-    });
-    if (removed.id === draftLocalSeatId) setDraftLocalSeatId(null);
+    setRemovingSeatIds((current) => new Set(current).add(removed.id));
+    window.setTimeout(() => {
+      setDraftSeats((current) => ({
+        ...current,
+        [team]: { ...current[team], operatives: current[team].operatives.filter((seat) => seat.id !== removed.id) }
+      }));
+      setRemovingSeatIds((current) => {
+        const next = new Set(current);
+        next.delete(removed.id);
+        return next;
+      });
+      if (removed.id === draftLocalSeatId) setDraftLocalSeatId(null);
+    }, 190);
   }
 
   function updateTuning(team: Team, patch: Partial<AiTuning[Team]>) {
@@ -199,13 +229,37 @@ export function PlayersModal(props: PlayersModalProps) {
     props.onNewGame();
   }
 
-  async function createRoom() {
-    setCreatingRoom(true);
+  async function createNetworkRoom() {
+    setNetworkBusy(true);
+    setNetworkError(null);
     try {
-      const room = await api.createRoom("Хозяин комнаты");
-      setRoomCode(room.code);
+      await props.onCreateRoom(networkName);
+    } catch (caught) {
+      setNetworkError(caught instanceof Error ? caught.message : "Не удалось создать комнату.");
     } finally {
-      setCreatingRoom(false);
+      setNetworkBusy(false);
+    }
+  }
+
+  async function joinNetworkRoom() {
+    setNetworkBusy(true);
+    setNetworkError(null);
+    try {
+      await props.onJoinRoom(networkCode, networkName);
+    } catch (caught) {
+      setNetworkError(caught instanceof Error ? caught.message : "Не удалось войти в комнату.");
+    } finally {
+      setNetworkBusy(false);
+    }
+  }
+
+  async function leaveNetworkRoom() {
+    setNetworkBusy(true);
+    setNetworkError(null);
+    try {
+      await props.onLeaveRoom();
+    } finally {
+      setNetworkBusy(false);
     }
   }
 
@@ -213,7 +267,7 @@ export function PlayersModal(props: PlayersModalProps) {
     <div className={`modal-backdrop${presence.visible ? " is-visible" : ""}`} role="presentation" onMouseDown={props.onClose}>
       <section ref={presence.dialogRef} tabIndex={-1} className="game-modal players-modal" role="dialog" aria-modal="true" aria-labelledby="players-title" onMouseDown={(event) => event.stopPropagation()}>
         <header className="modal-header">
-          <div><span className="stage-kicker">Состав партии</span><h2 id="players-title">Игроки и роли</h2></div>
+          <div><span className="stage-kicker">Состав партии</span><h2 id="players-title">Настройка лобби</h2></div>
           <button type="button" onClick={props.onClose} aria-label="Закрыть">×</button>
         </header>
 
@@ -248,6 +302,7 @@ export function PlayersModal(props: PlayersModalProps) {
                     value={operative}
                     local={draftLocalSeatId === operative.id}
                     removable={draftSeats[team].operatives.length > 1}
+                    removing={removingSeatIds.has(operative.id)}
                     onChange={(value) => updateOperative(team, index, value)}
                     onMakeLocal={() => setDraftLocalSeatId(operative.id)}
                     onRemove={() => removeOperative(team, index)}
@@ -263,11 +318,32 @@ export function PlayersModal(props: PlayersModalProps) {
           ))}
         </div>
 
-        <details className="room-foundation">
-          <summary>Сетевая комната</summary>
-          <div><span>Состав и голоса уже готовы; синхронизацию подключим следующим слоем.</span></div>
-          {roomCode ? <code>{roomCode}</code> : <button type="button" aria-busy={creatingRoom} disabled={creatingRoom} onClick={() => void createRoom()}>{creatingRoom ? "Создаю…" : "Создать код"}</button>}
-        </details>
+        <section className={`room-foundation${roomOpen ? " is-open" : ""}`}>
+          <button className="room-foundation__summary" type="button" aria-expanded={roomOpen} onClick={() => setRoomOpen((current) => !current)}>
+            <span>Сетевая комната</span><i aria-hidden="true" />
+          </button>
+          <div className="room-foundation__reveal" aria-hidden={!roomOpen} inert={!roomOpen ? true : undefined}>
+            <div>
+              {props.networkRole === "offline" ? (
+                <div className="room-connect-form">
+                  <label><span>Ваше имя</span><input value={networkName} maxLength={24} onChange={(event) => setNetworkName(event.target.value)} /></label>
+                  <button type="button" aria-busy={networkBusy} disabled={networkBusy} onClick={() => void createNetworkRoom()}>Создать комнату</button>
+                  <span className="room-connect-form__or">или</span>
+                  <label><span>Код комнаты</span><input className="room-code-input" value={networkCode} maxLength={8} placeholder="ABC123" onChange={(event) => setNetworkCode(event.target.value.toUpperCase())} /></label>
+                  <button type="button" aria-busy={networkBusy} disabled={networkBusy || !networkCode.trim()} onClick={() => void joinNetworkRoom()}>Войти</button>
+                </div>
+              ) : (
+                <div className="room-connected">
+                  <div><span>{props.networkRole === "host" ? "Вы создали комнату" : "Вы подключены"}</span><code>{props.networkRoomCode}</code></div>
+                  <strong>{props.networkStatus}</strong>
+                  <span>{props.networkPeers.length ? `В сети: ${props.networkPeers.map((peer) => peer.name).join(", ")}` : "Ожидаем других игроков"}</span>
+                  <button type="button" disabled={networkBusy} onClick={() => void leaveNetworkRoom()}>Покинуть комнату</button>
+                </div>
+              )}
+              {networkError ? <p className="room-network-error" role="alert">{networkError}</p> : null}
+            </div>
+          </div>
+        </section>
 
         <footer className="modal-actions">
           <button className="game-action game-action--quiet" type="button" onClick={saveAndClose}>Сохранить и продолжить</button>

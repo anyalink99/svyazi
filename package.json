@@ -7,7 +7,7 @@
     "dev": "concurrently -k -n api,web -c blue,magenta \"tsx watch server/index.ts\" \"vite\"",
     "dev:api": "tsx watch server/index.ts",
     "dev:web": "vite",
-    "build": "tsc -p tsconfig.server.json --noEmit && vite build",
+    "build": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.json --noEmit && vite build",
     "prestart": "npm run build",
     "start": "tsx server/index.ts",
     "prepare:model": "python -m pip install -r requirements-model.txt && python scripts/prepare_model.py",
@@ -24,6 +24,7 @@
     "express": "^5.1.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "trystero": "^0.25.2",
     "zod": "^4.1.5"
   },
   "devDependencies": {
