@@ -3587,5 +3587,36 @@ select { padding: 7px 9px; }
 }
 
 @media (max-width: 620px) {
-  .history-intent { grid-template-columns: 1fr; }
+  .team-history li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "clue memory"
+      "guesses guesses"
+      "intent intent"
+      "meta meta";
+    gap: 6px 9px;
+  }
+
+  .history-clue {
+    grid-area: clue;
+    min-width: 0;
+    margin: 0;
+    padding-right: 0;
+  }
+
+  .history-clue strong {
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+  }
+
+  .clue-memory {
+    position: static;
+    grid-area: memory;
+  }
+
+  .history-guesses { grid-area: guesses; }
+  .history-intent { grid-area: intent; grid-template-columns: 1fr; }
+  .team-history li > small { grid-area: meta; }
 }
