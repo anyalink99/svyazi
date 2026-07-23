@@ -333,7 +333,6 @@ export function App() {
     if (loadingRef.current) return;
     updateLoading(true);
     setError(null);
-    setAutoPlay(false);
     try {
       resetFlow(await api.newGame(undefined, "red"));
       setPlayersOpen(false);

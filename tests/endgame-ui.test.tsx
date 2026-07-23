@@ -58,8 +58,8 @@ describe("endgame debrief", () => {
     const liveHtml = renderToStaticMarkup(<History history={[aiRecord, humanRecord]} gameOver={false} />);
     const finalHtml = renderToStaticMarkup(<History history={[aiRecord, humanRecord]} gameOver />);
 
-    expect(liveHtml).not.toContain("Имелись в виду");
-    expect(finalHtml).toContain("Имелись в виду");
+    expect(liveHtml).not.toContain("Замысел ИИ");
+    expect(finalHtml).toContain("Замысел ИИ");
     expect(finalHtml).toContain("ракета");
     expect(finalHtml).toContain("звезда");
     expect(finalHtml).not.toContain("секрет-человека");

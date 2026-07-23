@@ -3620,3 +3620,131 @@ select { padding: 7px 9px; }
   .history-intent { grid-area: intent; grid-template-columns: 1fr; }
   .team-history li > small { grid-area: meta; }
 }
+
+/* The clue log is one chronological tape. Two team columns are too narrow
+   inside the game sidebar and make both long clues and AI intent unreadable. */
+
+.history-feed {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  align-items: stretch;
+  align-content: flex-start;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  background: rgba(10, 16, 24, 0.62);
+  list-style: none;
+  scrollbar-color: var(--line-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.history-record {
+  --history-team: var(--neutral);
+  position: relative;
+  display: grid;
+  flex: 0 0 auto;
+  gap: 6px;
+  min-width: 0;
+  padding: 9px 10px 8px 11px;
+  border-bottom: 1px solid var(--line);
+  border-left: 3px solid var(--history-team);
+  background: rgba(7, 13, 20, 0.3);
+}
+
+.history-record:last-child { border-bottom: 0; }
+.history-record.is-red { --history-team: var(--red); }
+.history-record.is-blue { --history-team: var(--blue); }
+
+.history-record__headline {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.history-record__headline .team-beacon {
+  width: 8px;
+  height: 8px;
+}
+
+.history-record .history-clue {
+  grid-area: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.history-record .history-clue strong {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  color: var(--paper-dim);
+  font-size: 0.64rem;
+  line-height: 1.22;
+  text-overflow: clip;
+}
+
+.history-record .clue-memory {
+  position: static;
+  grid-area: auto;
+}
+
+.history-record .clue-memory > strong {
+  min-width: 42px;
+  padding: 4px 6px;
+  font-size: 0.61rem;
+}
+
+.history-record .history-guesses {
+  grid-area: auto;
+  gap: 4px 9px;
+  min-width: 0;
+  color: var(--sand);
+  font-size: 0.54rem;
+  line-height: 1.35;
+}
+
+.history-record .history-intent {
+  grid-area: auto;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  margin-top: 1px;
+  padding-top: 6px;
+}
+
+.history-record .history-intent > span {
+  font-size: 0.45rem;
+}
+
+.history-record .history-intent > div {
+  gap: 4px 5px;
+}
+
+.history-record .history-intent b {
+  padding: 2px 5px;
+  font-size: 0.48rem;
+}
+
+.history-record > small {
+  color: #766f62;
+  font-size: 0.47rem;
+  line-height: 1.3;
+}
+
+.history-empty {
+  margin: 0;
+  padding: 14px 12px;
+  border: 1px solid var(--line);
+  color: var(--sand);
+  background: rgba(10, 16, 24, 0.62);
+  font-size: 0.58rem;
+}
+
+@media (max-width: 820px) {
+  .history-feed { overflow-y: visible; }
+  .history-record { padding: 11px 10px; }
+  .history-record .history-clue strong { font-size: 0.68rem; }
+}
