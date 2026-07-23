@@ -104,7 +104,13 @@ export function runTurn(
     unresolvedClues(state.history, team)
   );
 
-  const resolved = resolveGuesses(state, clue, plan.picks.map((pick) => pick.index), plan.stoppedEarly);
+  const resolved = resolveGuesses(
+    state,
+    clue,
+    plan.picks.map((pick) => pick.index),
+    plan.stoppedEarly,
+    options.providedClue ? "human" : "ai"
+  );
   return { state: resolved.state, clue, plan, revealed: resolved.revealed };
 }
 
@@ -118,7 +124,8 @@ export function resolveGuesses(
   inputState: GameState,
   clue: Pick<ClueAnalysis, "word" | "number" | "targetWords" | "rankings">,
   pickIndices: readonly number[],
-  stoppedEarly = false
+  stoppedEarly = false,
+  clueGiver: "human" | "ai" = "human"
 ): ResolveResult {
   if (inputState.winner) throw new Error("Партия уже закончена.");
   const state = cloneGame(inputState);
@@ -159,6 +166,7 @@ export function resolveGuesses(
   const record: TurnRecord = {
     turn: state.turnNumber,
     team,
+    clueGiver,
     clue: clue.word,
     number: clue.number,
     targetWords: clue.targetWords,

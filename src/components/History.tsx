@@ -3,6 +3,7 @@ import type { Team, TurnRecord } from "../domain/types.js";
 
 interface HistoryProps {
   history: TurnRecord[];
+  gameOver: boolean;
 }
 
 const END_LABELS: Record<TurnRecord["endedBy"], string> = {
@@ -15,10 +16,12 @@ const END_LABELS: Record<TurnRecord["endedBy"], string> = {
 
 function TeamClues({
   team,
-  records
+  records,
+  gameOver
 }: {
   team: Team;
   records: TurnRecord[];
+  gameOver: boolean;
 }) {
   return (
     <section className={`team-history is-${team}`}>
@@ -42,6 +45,12 @@ function TeamClues({
                   <span className={`is-${guess.role}`} key={guess.index}><i />{guess.word}</span>
                 )) : <span>без ответа</span>}
               </div>
+              {gameOver && record.clueGiver === "ai" && record.targetWords.length ? (
+                <div className="history-intent">
+                  <span>Имелись в виду</span>
+                  <div>{record.targetWords.map((word) => <b key={word}>{word}</b>)}</div>
+                </div>
+              ) : null}
               <small>Ход {record.turn} · {END_LABELS[record.endedBy]}</small>
             </li>
           );})}
@@ -51,15 +60,15 @@ function TeamClues({
   );
 }
 
-export function History({ history }: HistoryProps) {
+export function History({ history, gameOver }: HistoryProps) {
   const red = history.filter((record) => record.team === "red");
   const blue = history.filter((record) => record.team === "blue");
   return (
     <section className="game-history" aria-labelledby="history-title">
       <div className="game-history__title"><h2 id="history-title">Подсказки</h2></div>
       <div className="history-columns">
-        <TeamClues team="red" records={red} />
-        <TeamClues team="blue" records={blue} />
+        <TeamClues team="red" records={red} gameOver={gameOver} />
+        <TeamClues team="blue" records={blue} gameOver={gameOver} />
       </div>
     </section>
   );

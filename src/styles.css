@@ -3531,3 +3531,61 @@ select { padding: 7px 9px; }
 @media (hover: none) {
   .lab-fab { opacity: 0.34; }
 }
+
+/* Endgame debrief: the board becomes the shared key and AI intent is declassified. */
+
+.board.is-final-key .word-card[data-key-role]:not(.is-revealed) {
+  transform-origin: 50% 50%;
+  animation: final-key-reveal 420ms var(--ease-signal) both;
+  animation-delay: calc(var(--card-order) * 16ms);
+}
+
+.history-intent {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 6px 9px;
+  margin-top: 3px;
+  padding-top: 7px;
+  border-top: 1px dashed rgba(229, 184, 92, 0.24);
+  animation: intent-declassify 320ms var(--ease-signal) both;
+}
+
+.history-intent > span {
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 0.48rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.history-intent > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.history-intent b {
+  padding: 2px 5px;
+  border: 1px solid rgba(229, 184, 92, 0.28);
+  color: var(--paper-dim);
+  background: rgba(229, 184, 92, 0.06);
+  font-size: 0.5rem;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+@keyframes final-key-reveal {
+  from { opacity: 0.42; transform: scale(0.94); filter: saturate(0.3) brightness(0.72); }
+  to { opacity: 1; transform: scale(1); filter: saturate(1) brightness(1); }
+}
+
+@keyframes intent-declassify {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 620px) {
+  .history-intent { grid-template-columns: 1fr; }
+}

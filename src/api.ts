@@ -98,14 +98,12 @@ export const api = {
 
   async resolveTurn(
     state: GameState,
-    clue: string,
-    number: number,
+    clue: ClueAnalysis,
     picks: number[],
     stoppedEarly = false,
-    allowUnknown = false
+    clueGiver: "human" | "ai" = "human"
   ): Promise<ResolveResult> {
-    const analysis = analyzeProvidedClue(await semantic(), state, clue, number, allowUnknown);
-    return { clue: analysis, ...resolveGuesses(state, analysis, picks, stoppedEarly) };
+    return { clue, ...resolveGuesses(state, clue, picks, stoppedEarly, clueGiver) };
   },
 
   async simulate(games: number, redProfile: OperativeProfile, blueProfile: OperativeProfile): Promise<SimulationSummary> {

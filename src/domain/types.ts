@@ -49,6 +49,7 @@ export interface RevealedGuess {
 export interface TurnRecord {
   turn: number;
   team: Team;
+  clueGiver?: "human" | "ai";
   clue: string;
   number: number;
   targetWords: string[];

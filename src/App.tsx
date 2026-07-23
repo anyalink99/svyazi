@@ -524,10 +524,10 @@ export function App() {
       setLastPlan(plan);
       const resolved = await api.resolveTurn(
         turnBase,
-        clue.word,
-        clue.number,
+        clue,
         plan.picks.map((pick) => pick.index),
-        plan.stoppedEarly
+        plan.stoppedEarly,
+        seats[turnBase.turn].spymaster.controller
       );
       await acceptResolvedTurn(turnBase, resolved, true);
     } catch (caught) {
@@ -536,15 +536,20 @@ export function App() {
     } finally {
       updateLoading(false);
     }
-  }, [acceptResolvedTurn, clue, loading, phase, tuning, turnBase]);
+  }, [acceptResolvedTurn, clue, loading, phase, seats, tuning, turnBase]);
 
   const finishHumanGuess = useCallback(async (indices = pickedIndicesRef.current, stoppedEarly = true) => {
     if (!turnBase || !clue || phase !== "guess" || loadingRef.current) return;
     updateLoading(true);
     setError(null);
     try {
-      const teamAllowsUnknown = seats[turnBase.turn].operatives.every((seat) => seat.controller === "human");
-      const resolved = await api.resolveTurn(turnBase, clue.word, clue.number, indices, stoppedEarly, teamAllowsUnknown);
+      const resolved = await api.resolveTurn(
+        turnBase,
+        clue,
+        indices,
+        stoppedEarly,
+        seats[turnBase.turn].spymaster.controller
+      );
       await acceptResolvedTurn(turnBase, resolved, false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Не удалось применить ответы.");
@@ -768,6 +773,7 @@ export function App() {
               cards={game.cards}
               clue={clue}
               showKey={showKey || persistentSpymasterView}
+              gameOver={Boolean(game.winner)}
               showTrace={showTrace}
               interactive={Boolean(phase === "guess" && localOperativeCanAct && network.hostAvailable && !loading && !persistentSpymasterView)}
               currentTeam={activeTeam}
@@ -824,7 +830,7 @@ export function App() {
               onNewGame={() => { if (canAdvanceSystem) void startNewGame(); }}
             />
           ) : null}
-          {game ? <History history={game.history} /> : null}
+          {game ? <History history={game.history} gameOver={Boolean(game.winner)} /> : null}
         </div>
       </main>
 

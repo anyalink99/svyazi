@@ -5,6 +5,7 @@ interface BoardProps {
   cards: CardState[];
   clue: ClueAnalysis | null;
   showKey: boolean;
+  gameOver: boolean;
   showTrace: boolean;
   interactive: boolean;
   currentTeam: Team;
@@ -31,6 +32,7 @@ export function Board({
   cards,
   clue,
   showKey,
+  gameOver,
   showTrace,
   interactive,
   currentTeam,
@@ -46,11 +48,11 @@ export function Board({
 
   return (
     <div className="board-shell">
-      <div className="board" aria-label="Игровое поле">
+      <div className={`board${gameOver ? " is-final-key" : ""}`} aria-label={gameOver ? "Финальный ключ" : "Игровое поле"}>
         {cards.map((card, index) => {
           const ranking = rankingByIndex.get(index);
           const heat = ranking ? Math.max(0.08, (ranking.similarity - minimum) / range) : 0;
-          const roleVisible = card.revealed || showKey;
+          const roleVisible = card.revealed || showKey || gameOver;
           const canChoose = interactive && !card.revealed;
           const cardVotes = voteMarkers.filter((vote) => vote.index === index);
           const locallySelected = cardVotes.some((vote) => vote.seatId === localSeatId);
@@ -60,12 +62,13 @@ export function Board({
           } as CSSProperties;
           return (
             <button
+              key={`${card.word}-${index}`}
               type="button"
               className={`word-card${card.revealed ? " is-revealed" : ""}${cardVotes.length ? ` has-votes is-voted-${currentTeam}` : ""}${locallySelected ? " is-local-vote" : ""}${
                 showTrace && ranking ? " has-signal" : ""
               }`}
               data-role={roleVisible ? card.role : "hidden"}
-              data-key-role={showKey && !card.revealed ? card.role : undefined}
+              data-key-role={(showKey || gameOver) && !card.revealed ? card.role : undefined}
               disabled={!canChoose}
               onClick={() => onCardClick(index)}
               style={style}

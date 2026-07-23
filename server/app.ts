@@ -27,6 +27,7 @@ const cardSchema = z.object({
 const turnRecordSchema = z.object({
   turn: z.number().int(),
   team: teamSchema,
+  clueGiver: controllerSchema.optional(),
   clue: z.string(),
   number: z.number().int(),
   targetWords: z.array(z.string()),
@@ -241,14 +242,22 @@ export function createApp(semantic: SemanticSpace) {
           number: z.number().int().min(1).max(9),
           picks: z.array(z.number().int().min(0).max(24)).max(25),
           stoppedEarly: z.boolean().optional(),
-          allowUnknown: z.boolean().optional()
+          allowUnknown: z.boolean().optional(),
+          clueGiver: controllerSchema.optional(),
+          targetWords: z.array(z.string().min(1)).max(9).optional()
         })
         .parse(request.body);
       const state = body.state as GameState;
       const analysis = analyzeProvidedClue(semantic, state, body.clue, body.number, body.allowUnknown);
+      if (body.clueGiver === "ai" && body.targetWords) {
+        const boardWords = new Set(state.cards.map((card) => card.word));
+        analysis.targetWords = [...new Set(body.targetWords)]
+          .filter((word) => boardWords.has(word))
+          .slice(0, body.number);
+      }
       response.json({
         clue: analysis,
-        ...resolveGuesses(state, analysis, body.picks, body.stoppedEarly)
+        ...resolveGuesses(state, analysis, body.picks, body.stoppedEarly, body.clueGiver ?? "human")
       });
     })
   );

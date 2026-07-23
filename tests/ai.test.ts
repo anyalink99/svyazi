@@ -168,6 +168,7 @@ describe("semantic agents", () => {
     };
     const result = runTurn(semantic, state, { profile: "cautious", maxClueNumber: 3 });
     expect(result.state.history).toHaveLength(1);
+    expect(result.state.history[0].clueGiver).toBe("ai");
     expect(result.revealed.length).toBeGreaterThan(0);
     expect(result.state.cards.filter((card) => card.revealed).length).toBeGreaterThan(
       board.filter((card) => card.revealed).length
@@ -190,9 +191,28 @@ describe("semantic agents", () => {
 
     expect(resolved.revealed.map((guess) => guess.word)).toEqual(["ракета", "звезда", "планета"]);
     expect(resolved.state.history).toHaveLength(1);
+    expect(resolved.record.clueGiver).toBe("human");
     expect(resolved.record.remaining).toBe(1);
     expect(resolved.state.winner).toBe("red");
     expect(state.cards[0].revealed).toBe(false);
+  });
+
+  it("keeps the AI spymaster's exact intended words in the turn record", () => {
+    const state: GameState = {
+      id: "ai-intent",
+      seed: 41,
+      cards: board.map((card) => ({ ...card })),
+      turn: "red",
+      startingTeam: "red",
+      turnNumber: 1,
+      winner: null,
+      history: []
+    };
+    const clue = generateClue(semantic, state.cards, "red", { maxNumber: 3 });
+    const resolved = resolveGuesses(state, clue, [clue.rankings[0].index], true, "ai");
+
+    expect(resolved.record.clueGiver).toBe("ai");
+    expect(resolved.record.targetWords).toEqual(clue.targetWords);
   });
 
   it("accepts an out-of-vocabulary human clue when no AI must understand it", () => {
